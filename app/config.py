@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     app_port: int = 8080
     documents_dir: str = "./data/documents"
     company_name: str = "Furnisteel Systems Pte Ltd"
+    admin_api_key: str = ""
+    jwt_secret: str = "change-me-in-production"
+    jwt_access_token_exp_minutes: int = 720
 
     @property
     def chroma_http_url(self) -> str:

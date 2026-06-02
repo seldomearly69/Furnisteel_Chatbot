@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ConversationRow, MessageRow, fetchConversations, fetchMessages } from "./api";
+import {
+  ConversationRow,
+  MessageRow,
+  exchangeApiKeyForToken,
+  fetchConversations,
+  fetchMessages
+} from "./api";
+
+const TOKEN_KEY = "furnisteel_admin_token";
 
 function formatTime(iso: string) {
   const d = new Date(iso);
@@ -12,6 +20,12 @@ function bubbleClass(role: MessageRow["role"]) {
 }
 
 export function App() {
+  const [token, setToken] = useState<string | null>(
+    () => localStorage.getItem(TOKEN_KEY) || null
+  );
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -36,14 +50,43 @@ export function App() {
     });
   }, [conversations, search]);
 
+  async function loginWithApiKey() {
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const res = await exchangeApiKeyForToken(apiKeyInput.trim());
+      localStorage.setItem(TOKEN_KEY, res.access_token);
+      setToken(res.access_token);
+      setApiKeyInput("");
+    } catch (e: any) {
+      setError(e?.message || "Login failed");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY);
+    setToken(null);
+    setConversations([]);
+    setMessages([]);
+    setSelectedId(null);
+  }
+
   async function loadConversations() {
+    if (!token) return;
     setLoadingConvs(true);
     setError(null);
     try {
-      const data = await fetchConversations();
+      const data = await fetchConversations(token);
       setConversations(data);
       if (!selectedId && data.length) setSelectedId(data[0].id);
     } catch (e: any) {
+      if ((e?.message || "").includes("Unauthorized")) {
+        logout();
+        setError("Session expired. Please sign in again.");
+        return;
+      }
       setError(e?.message || "Failed to load conversations");
     } finally {
       setLoadingConvs(false);
@@ -51,12 +94,18 @@ export function App() {
   }
 
   async function loadMessages(conversationId: string) {
+    if (!token) return;
     setLoadingMsgs(true);
     setError(null);
     try {
-      const data = await fetchMessages(conversationId);
+      const data = await fetchMessages(token, conversationId);
       setMessages(data);
     } catch (e: any) {
+      if ((e?.message || "").includes("Unauthorized")) {
+        logout();
+        setError("Session expired. Please sign in again.");
+        return;
+      }
       setError(e?.message || "Failed to load messages");
     } finally {
       setLoadingMsgs(false);
@@ -64,14 +113,49 @@ export function App() {
   }
 
   useEffect(() => {
+    if (!token) return;
     loadConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [token]);
 
   useEffect(() => {
+    if (!token) return;
     if (selectedId) loadMessages(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedId, token]);
+
+  if (!token) {
+    return (
+      <div className="h-full bg-wa-bg text-wa-text flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-wa-panel border border-white/10 rounded-xl p-6">
+          <div className="text-xl font-semibold mb-2">Admin Access</div>
+          <div className="text-sm text-wa-muted mb-4">
+            Enter your admin API key to view customer chats.
+          </div>
+          <input
+            type="password"
+            value={apiKeyInput}
+            onChange={(e) => setApiKeyInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !authLoading) {
+                void loginWithApiKey();
+              }
+            }}
+            placeholder="Admin API key"
+            className="w-full rounded bg-wa-panel2 px-3 py-2 outline-none border border-white/10 focus:border-wa-green/40"
+          />
+          <button
+            onClick={loginWithApiKey}
+            disabled={!apiKeyInput.trim() || authLoading}
+            className="mt-3 w-full text-sm px-3 py-2 rounded bg-wa-green/20 hover:bg-wa-green/30 border border-wa-green/30 disabled:opacity-50"
+          >
+            {authLoading ? "Signing in..." : "Sign in"}
+          </button>
+          {error ? <div className="mt-3 text-sm text-red-300">{error}</div> : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-hidden text-wa-text">
@@ -84,6 +168,12 @@ export function App() {
               className="text-sm px-3 py-1 rounded bg-wa-green/20 hover:bg-wa-green/30 border border-wa-green/30"
             >
               Refresh
+            </button>
+            <button
+              onClick={logout}
+              className="text-sm px-3 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10"
+            >
+              Logout
             </button>
           </div>
 

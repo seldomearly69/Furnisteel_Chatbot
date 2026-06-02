@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+import jwt
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -48,6 +58,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _create_access_token() -> str:
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": "admin",
+        "iat": int(now.timestamp()),
+        "exp": int(
+            (now + timedelta(minutes=settings.jwt_access_token_exp_minutes)).timestamp()
+        ),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
+def _require_admin_token(authorization: str | None = None) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+    token = authorization.split(" ", 1)[1].strip()
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+    if payload.get("sub") != "admin":
+        raise HTTPException(status_code=401, detail="Invalid token subject")
+    return token
+
+
+def _admin_auth_dep(authorization: str | None = Header(default=None)):
+    _require_admin_token(authorization=authorization)
+    return True
 
 
 def _configure_whatsapp() -> None:
@@ -97,8 +141,35 @@ class IngestStartedResponse(BaseModel):
     message: str
 
 
+class AdminLoginRequest(BaseModel):
+    api_key: str
+
+
+class AdminTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in_seconds: int
+
+
+@app.post("/admin/auth/token", response_model=AdminTokenResponse)
+async def admin_token(body: AdminLoginRequest):
+    settings = get_settings()
+    if not settings.admin_api_key:
+        raise HTTPException(status_code=500, detail="ADMIN_API_KEY is not configured")
+    if body.api_key != settings.admin_api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return AdminTokenResponse(
+        access_token=_create_access_token(),
+        expires_in_seconds=settings.jwt_access_token_exp_minutes * 60,
+    )
+
+
 @app.post("/admin/ingest", response_model=IngestStartedResponse)
-async def ingest_documents(background_tasks: BackgroundTasks, force: bool = False):
+async def ingest_documents(
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    _auth=Depends(_admin_auth_dep),
+):
     def run_ingest():
         pipeline = DocumentIngestionPipeline()
         pipeline.ingest_all(force=force)
@@ -110,14 +181,14 @@ async def ingest_documents(background_tasks: BackgroundTasks, force: bool = Fals
 
 
 @app.post("/admin/ingest/sync", response_model=IngestResponse)
-async def ingest_documents_sync(force: bool = False):
+async def ingest_documents_sync(force: bool = False, _auth=Depends(_admin_auth_dep)):
     pipeline = DocumentIngestionPipeline()
     stats = pipeline.ingest_all(force=force)
     return IngestResponse(**stats)
 
 
 @app.post("/admin/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), _auth=Depends(_admin_auth_dep)):
     settings = get_settings()
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".md", ".markdown"}:
@@ -152,7 +223,9 @@ class MessageRow(BaseModel):
 
 
 @app.get("/admin/conversations", response_model=list[ConversationRow])
-async def list_conversations(limit: int = 200, offset: int = 0):
+async def list_conversations(
+    limit: int = 200, offset: int = 0, _auth=Depends(_admin_auth_dep)
+):
     session_factory = get_session_factory()
     with session_factory() as session:
         repo = ChatRepository(session)
@@ -178,7 +251,12 @@ async def list_conversations(limit: int = 200, offset: int = 0):
 
 
 @app.get("/admin/conversations/{conversation_id}/messages", response_model=list[MessageRow])
-async def get_conversation_messages(conversation_id: str, limit: int = 500, offset: int = 0):
+async def get_conversation_messages(
+    conversation_id: str,
+    limit: int = 500,
+    offset: int = 0,
+    _auth=Depends(_admin_auth_dep),
+):
     import uuid
 
     try:

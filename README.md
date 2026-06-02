@@ -204,6 +204,7 @@ uvicorn app.main:app --reload --port 8080
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Service and index stats |
+| `/admin/auth/token` | POST | Exchange admin API key for JWT |
 | `/admin/ingest/sync` | POST | Scan `data/documents/` and index |
 | `/admin/ingest` | POST | Background ingestion |
 | `/admin/documents/upload` | POST | Upload + index one file |
@@ -216,6 +217,15 @@ The WhatsApp-style chat viewer runs in a separate container and is bound to **lo
 
 - Open: `http://127.0.0.1:3000`
 - It reads from the API at `http://localhost:8080` (CORS enabled for localhost).
+- Requires sign-in with `ADMIN_API_KEY` (UI exchanges it for JWT).
+
+### Admin auth (JWT)
+
+Set these in `.env`:
+
+- `ADMIN_API_KEY` (required; used by UI login)
+- `JWT_SECRET` (required in production; change default)
+- `JWT_ACCESS_TOKEN_EXP_MINUTES` (default 720)
 
 ## Daily email: new customers (last 24h)
 
