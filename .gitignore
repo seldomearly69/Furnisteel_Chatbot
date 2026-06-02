@@ -13,4 +13,5 @@ build/
 .cache/
 data/documents/*
 !data/documents/.gitkeep
-keys/
+*.pem
+nginx/certs/*
