@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ConversationRow,
   MessageRow,
@@ -9,6 +9,7 @@ import {
 
 const TOKEN_KEY = "furnisteel_admin_token";
 const READ_COUNTS_KEY = "furnisteel_read_counts";
+const POLL_INTERVAL_MS = 10_000;
 
 function loadReadCounts(): Record<string, number> {
   try {
@@ -49,6 +50,8 @@ export function App() {
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [readCounts, setReadCounts] = useState<Record<string, number>>(loadReadCounts);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedId) || null,
@@ -97,69 +100,78 @@ export function App() {
     });
   }
 
-  function selectConversation(conv: ConversationRow) {
+  const refreshAll = useCallback(
+    async (silent = false, activeConversationId?: string | null) => {
+      if (!token) return;
+
+      const activeId =
+        activeConversationId !== undefined
+          ? activeConversationId
+          : selectedIdRef.current;
+
+      if (!silent) {
+        setLoadingConvs(true);
+        if (activeId) setLoadingMsgs(true);
+      }
+      setError(null);
+
+      try {
+        const data = await fetchConversations(token);
+        setConversations(data);
+
+        let conversationId = activeId;
+        if (!conversationId && data.length) {
+          conversationId = data[0].id;
+          setSelectedId(data[0].id);
+          markConversationRead(data[0].id, data[0].message_count);
+        }
+
+        if (conversationId) {
+          const open = data.find((c) => c.id === conversationId);
+          const msgs = await fetchMessages(token, conversationId);
+          setMessages(msgs);
+          const count = Math.max(open?.message_count ?? 0, msgs.length);
+          markConversationRead(conversationId, count);
+        } else {
+          setMessages([]);
+        }
+      } catch (e: any) {
+        if ((e?.message || "").includes("Unauthorized")) {
+          logout();
+          setError("Session expired. Please sign in again.");
+          return;
+        }
+        if (!silent) {
+          setError(e?.message || "Failed to refresh chats");
+        }
+      } finally {
+        if (!silent) {
+          setLoadingConvs(false);
+          setLoadingMsgs(false);
+        }
+      }
+    },
+    [token]
+  );
+
+  function openConversation(conv: ConversationRow) {
     setSelectedId(conv.id);
     markConversationRead(conv.id, conv.message_count);
-  }
-
-  async function loadConversations() {
-    if (!token) return;
-    setLoadingConvs(true);
-    setError(null);
-    try {
-      const data = await fetchConversations(token);
-      setConversations(data);
-      if (!selectedId && data.length) {
-        selectConversation(data[0]);
-      } else if (selectedId) {
-        const open = data.find((c) => c.id === selectedId);
-        if (open) markConversationRead(selectedId, open.message_count);
-      }
-    } catch (e: any) {
-      if ((e?.message || "").includes("Unauthorized")) {
-        logout();
-        setError("Session expired. Please sign in again.");
-        return;
-      }
-      setError(e?.message || "Failed to load conversations");
-    } finally {
-      setLoadingConvs(false);
-    }
-  }
-
-  async function loadMessages(conversationId: string) {
-    if (!token) return;
-    setLoadingMsgs(true);
-    setError(null);
-    try {
-      const data = await fetchMessages(token, conversationId);
-      setMessages(data);
-      const conv = conversations.find((c) => c.id === conversationId);
-      const count = Math.max(conv?.message_count ?? 0, data.length);
-      markConversationRead(conversationId, count);
-    } catch (e: any) {
-      if ((e?.message || "").includes("Unauthorized")) {
-        logout();
-        setError("Session expired. Please sign in again.");
-        return;
-      }
-      setError(e?.message || "Failed to load messages");
-    } finally {
-      setLoadingMsgs(false);
-    }
+    void refreshAll(false, conv.id);
   }
 
   useEffect(() => {
     if (!token) return;
-    loadConversations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+    void refreshAll(false);
+  }, [token, refreshAll]);
 
   useEffect(() => {
     if (!token) return;
-    if (selectedId) loadMessages(selectedId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, token]);
+    const intervalId = window.setInterval(() => {
+      void refreshAll(true);
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [token, refreshAll]);
 
   if (!token) {
     return (
@@ -201,12 +213,6 @@ export function App() {
           <div className="shrink-0 px-4 py-3 bg-wa-panel2 flex items-center justify-between">
             <div className="font-semibold">Furnisteel Chats</div>
             <button
-              onClick={loadConversations}
-              className="text-sm px-3 py-1 rounded bg-wa-green/20 hover:bg-wa-green/30 border border-wa-green/30"
-            >
-              Refresh
-            </button>
-            <button
               onClick={logout}
               className="text-sm px-3 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10"
             >
@@ -235,7 +241,7 @@ export function App() {
                 return (
                   <button
                     key={c.id}
-                    onClick={() => selectConversation(c)}
+                    onClick={() => openConversation(c)}
                     className={[
                       "w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/5",
                       active ? "bg-white/10" : ""
@@ -280,13 +286,6 @@ export function App() {
                 </div>
               ) : null}
             </div>
-            <button
-              disabled={!selectedId}
-              onClick={() => selectedId && loadMessages(selectedId)}
-              className="text-sm px-3 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 disabled:opacity-50"
-            >
-              Reload
-            </button>
           </div>
 
           {error ? (
