@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-furnisteel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-furnisteel_chat}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-furnisteel} -d ${POSTGRES_DB:-furnisteel_chat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+      ALLOW_RESET: "TRUE"
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-furnisteel}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-furnisteel_chat}
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      DOCUMENTS_DIR: /app/data/documents
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/documents:/app/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+
+  chat-ui:
+    build:
+      context: ./ui
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE: http://localhost:8080
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      app:
+        condition: service_started
+
+  ingest:
+    build: .
+    profiles: ["ingest"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-furnisteel}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-furnisteel_chat}
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      DOCUMENTS_DIR: /app/data/documents
+    volumes:
+      - ./data/documents:/app/data/documents
+    depends_on:
+      chromadb:
+        condition: service_started
+    command: ["python", "-m", "app.ingestion.cli"]
+
+  notifier:
+    build:
+      context: ./notifier
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-furnisteel}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-furnisteel_chat}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  chroma_data:
