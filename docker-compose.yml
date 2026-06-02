@@ -60,6 +60,8 @@ services:
     depends_on:
       app:
         condition: service_started
+      chat-ui:
+        condition: service_started
 
   chat-ui:
     build:
@@ -67,8 +69,8 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_BASE: http://localhost:8080
-    ports:
-      - "127.0.0.1:3000:3000"
+    expose:
+      - "3000"
     depends_on:
       app:
         condition: service_started
