@@ -15,4 +15,4 @@ data/documents/*
 !data/documents/.gitkeep
 *.pem
 nginx/certs/*
-nginx/certs/*
+keys/
