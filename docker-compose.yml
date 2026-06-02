@@ -66,11 +66,11 @@ services:
   chat-ui:
     build:
       context: ./ui
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-https://bot.fmfurnisteel.com}
     restart: unless-stopped
-    environment:
-      VITE_API_BASE: http://localhost:8080
     expose:
-      - "3000"
+      - "80"
     depends_on:
       app:
         condition: service_started

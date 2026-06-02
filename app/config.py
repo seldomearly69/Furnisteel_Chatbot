@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     jwt_secret: str = "change-me-in-production"
     jwt_access_token_exp_minutes: int = 720
+    cors_allowed_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,https://dashboard.fmfurnisteel.com"
+    )
 
     @property
     def chroma_http_url(self) -> str:

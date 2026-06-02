@@ -213,10 +213,11 @@ uvicorn app.main:app --reload --port 8080
 
 ## Admin Chat UI
 
-The WhatsApp-style chat viewer runs in a separate container and is bound to **localhost only**.
+The WhatsApp-style chat viewer is built as a **production static site** (nginx), proxied at `https://dashboard.fmfurnisteel.com`.
 
-- Open: `http://127.0.0.1:3000`
-- It reads from the API at `http://localhost:8080` (CORS enabled for localhost).
+- API base is baked in at build time via `VITE_API_BASE` (default `https://bot.fmfurnisteel.com`).
+- Rebuild `chat-ui` after changing `VITE_API_BASE`.
+- Do **not** use Vite dev mode (`npm run dev`) behind a public HTTPS domain — HMR WebSocket errors in the browser console are expected in that setup.
 - Requires sign-in with `ADMIN_API_KEY` (UI exchanges it for JWT).
 
 ### Admin auth (JWT)

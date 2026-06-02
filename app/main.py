@@ -50,10 +50,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Allow the local admin UI to call this API from the browser.
+# Allow the admin UI to call this API from the browser.
+_cors_origins = [
+    origin.strip()
+    for origin in get_settings().cors_allowed_origins.split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
