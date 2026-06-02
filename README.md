@@ -104,6 +104,29 @@ In [Meta for Developers](https://developers.facebook.com/) → your app → **Wh
 
 Set `WHATSAPP_CALLBACK_URL` to your public URL if using pywa auto-registration.
 
+### HTTPS reverse proxy with Nginx (for Meta callback)
+
+A dedicated `nginx` container is included to terminate HTTPS and proxy traffic to `app:8080`.
+
+- Nginx config: `nginx/conf.d/default.conf`
+- TLS cert paths expected by Nginx:
+  - `nginx/certs/fullchain.pem`
+  - `nginx/certs/privkey.pem`
+
+Start with:
+
+```bash
+docker compose up -d --build nginx app
+```
+
+Then set Meta callback URL to your HTTPS host root, for example:
+
+```text
+https://chat.furnisteel.com.sg/
+```
+
+Nginx forwards this to the app container, where pywa handles webhook verification and incoming events.
+
 ### 6. Verify
 
 ```bash
