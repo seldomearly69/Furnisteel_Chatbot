@@ -8,6 +8,21 @@ import {
 } from "./api";
 
 const TOKEN_KEY = "furnisteel_admin_token";
+const READ_COUNTS_KEY = "furnisteel_read_counts";
+
+function loadReadCounts(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(READ_COUNTS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function unreadCount(conv: ConversationRow, readCounts: Record<string, number>) {
+  const lastRead = readCounts[conv.id] ?? 0;
+  return Math.max(0, conv.message_count - lastRead);
+}
 
 function formatTime(iso: string) {
   const d = new Date(iso);
@@ -33,6 +48,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [readCounts, setReadCounts] = useState<Record<string, number>>(loadReadCounts);
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedId) || null,
@@ -73,6 +89,19 @@ export function App() {
     setSelectedId(null);
   }
 
+  function markConversationRead(conversationId: string, messageCount: number) {
+    setReadCounts((prev) => {
+      const next = { ...prev, [conversationId]: messageCount };
+      localStorage.setItem(READ_COUNTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function selectConversation(conv: ConversationRow) {
+    setSelectedId(conv.id);
+    markConversationRead(conv.id, conv.message_count);
+  }
+
   async function loadConversations() {
     if (!token) return;
     setLoadingConvs(true);
@@ -80,7 +109,12 @@ export function App() {
     try {
       const data = await fetchConversations(token);
       setConversations(data);
-      if (!selectedId && data.length) setSelectedId(data[0].id);
+      if (!selectedId && data.length) {
+        selectConversation(data[0]);
+      } else if (selectedId) {
+        const open = data.find((c) => c.id === selectedId);
+        if (open) markConversationRead(selectedId, open.message_count);
+      }
     } catch (e: any) {
       if ((e?.message || "").includes("Unauthorized")) {
         logout();
@@ -100,6 +134,9 @@ export function App() {
     try {
       const data = await fetchMessages(token, conversationId);
       setMessages(data);
+      const conv = conversations.find((c) => c.id === conversationId);
+      const count = Math.max(conv?.message_count ?? 0, data.length);
+      markConversationRead(conversationId, count);
     } catch (e: any) {
       if ((e?.message || "").includes("Unauthorized")) {
         logout();
@@ -194,10 +231,11 @@ export function App() {
             ) : (
               filtered.map((c) => {
                 const active = c.id === selectedId;
+                const unread = unreadCount(c, readCounts);
                 return (
                   <button
                     key={c.id}
-                    onClick={() => setSelectedId(c.id)}
+                    onClick={() => selectConversation(c)}
                     className={[
                       "w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/5",
                       active ? "bg-white/10" : ""
@@ -214,9 +252,11 @@ export function App() {
                       </div>
                       <div className="text-xs text-wa-muted shrink-0 text-right">
                         <div>{formatTime(c.updated_at)}</div>
-                        <div className="mt-1 inline-flex items-center justify-center min-w-6 h-5 px-2 rounded-full bg-wa-green/30 border border-wa-green/30">
-                          {c.message_count}
-                        </div>
+                        {unread > 0 ? (
+                          <div className="mt-1 inline-flex items-center justify-center min-w-6 h-5 px-2 rounded-full bg-wa-green text-wa-bg font-medium">
+                            {unread}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </button>
