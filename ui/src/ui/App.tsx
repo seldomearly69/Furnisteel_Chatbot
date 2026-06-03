@@ -64,7 +64,7 @@ function Avatar({ label, size = "md" }: { label: string; size?: "sm" | "md" }) {
   return (
     <div
       className={[
-        "shrink-0 rounded-full bg-fs-accentSoft text-fs-accent font-semibold flex items-center justify-center ring-1 ring-fs-accent/15",
+        "shrink-0 rounded-full bg-wa-green/20 text-wa-green font-semibold flex items-center justify-center ring-1 ring-wa-green/30",
         dim
       ].join(" ")}
       aria-hidden
@@ -88,24 +88,24 @@ function LoginScreen({
   onLogin: () => void;
 }) {
   return (
-    <div className="h-full flex items-center justify-center p-6 bg-gradient-to-br from-fs-bg via-fs-accentSoft/30 to-fs-bg">
-      <div className="w-full max-w-md bg-fs-surface rounded-2xl shadow-panel border border-fs-border p-8">
+    <div className="h-full flex items-center justify-center p-6 bg-wa-bg">
+      <div className="w-full max-w-md bg-wa-panel rounded-xl border border-white/10 p-8">
         <div className="flex items-center gap-3 mb-6">
-          <div className="h-12 w-12 rounded-xl bg-fs-accent text-white font-bold text-lg flex items-center justify-center shadow-card">
+          <div className="h-12 w-12 rounded-xl bg-wa-green/20 text-wa-green font-bold text-lg flex items-center justify-center">
             FS
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-fs-text tracking-tight">
+            <h1 className="text-xl font-semibold text-wa-text tracking-tight">
               Furnisteel Admin
             </h1>
-            <p className="text-sm text-fs-muted">Customer chat dashboard</p>
+            <p className="text-sm text-wa-muted">Customer chat dashboard</p>
           </div>
         </div>
-        <p className="text-sm text-fs-muted mb-4 leading-relaxed">
+        <p className="text-sm text-wa-muted mb-4 leading-relaxed">
           Sign in with your admin API key. Sessions expire automatically per server
           policy.
         </p>
-        <label className="block text-sm font-medium text-fs-text mb-1.5" htmlFor="api-key">
+        <label className="block text-sm font-medium text-wa-text mb-1.5" htmlFor="api-key">
           API key
         </label>
         <input
@@ -118,20 +118,20 @@ function LoginScreen({
           }}
           placeholder="Enter admin API key"
           autoComplete="current-password"
-          className="w-full rounded-lg bg-fs-bg px-3.5 py-2.5 outline-none border border-fs-border focus:border-fs-accent focus:ring-2 focus:ring-fs-accent/20 transition-shadow"
+          className="w-full rounded-lg bg-wa-panel2 px-3.5 py-2.5 outline-none border border-white/5 focus:border-wa-green/40 transition-colors"
         />
         <button
           type="button"
           onClick={onLogin}
           disabled={!apiKeyInput.trim() || authLoading}
-          className="mt-4 w-full text-sm font-medium px-4 py-2.5 rounded-lg bg-fs-accent text-white hover:bg-fs-accentHover disabled:opacity-50 disabled:pointer-events-none transition-colors shadow-card"
+          className="mt-4 w-full text-sm font-medium px-4 py-2.5 rounded-lg bg-wa-green/20 hover:bg-wa-green/30 border border-wa-green/30 text-wa-text disabled:opacity-50 disabled:pointer-events-none transition-colors"
         >
           {authLoading ? "Signing in…" : "Sign in"}
         </button>
         {error ? (
           <div
             role="alert"
-            className="mt-4 text-sm text-fs-danger bg-fs-dangerSoft border border-red-200 rounded-lg px-3 py-2"
+            className="mt-4 text-sm text-red-300 bg-red-950/30 border border-red-900/30 rounded-lg px-3 py-2"
           >
             {error}
           </div>
@@ -334,29 +334,29 @@ export function App() {
     "Select a conversation";
 
   return (
-    <div className="h-full overflow-hidden bg-fs-bg">
+    <div className="h-full overflow-hidden bg-wa-bg">
       <div className="h-full min-h-0 grid grid-cols-[minmax(300px,360px)_1fr]">
-        <aside className="h-full min-h-0 bg-fs-sidebar border-r border-fs-border flex flex-col overflow-hidden">
-          <header className="shrink-0 px-4 py-4 bg-fs-surface border-b border-fs-border flex items-center justify-between gap-3">
+        <aside className="h-full min-h-0 bg-wa-panel border-r border-black/30 flex flex-col overflow-hidden">
+          <header className="shrink-0 px-4 py-4 bg-wa-panel2 border-b border-black/30 flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="font-semibold text-fs-text tracking-tight truncate">
+              <div className="font-semibold text-wa-text tracking-tight truncate">
                 Conversations
               </div>
-              <div className="text-xs text-fs-muted truncate">Furnisteel WhatsApp</div>
+              <div className="text-xs text-wa-muted truncate">Furnisteel WhatsApp</div>
             </div>
             <button
               type="button"
               onClick={() => logout()}
-              className="shrink-0 text-sm font-medium px-3 py-1.5 rounded-lg text-fs-muted hover:text-fs-text hover:bg-fs-bg border border-fs-border transition-colors"
+              className="shrink-0 text-sm px-3 py-1.5 rounded-lg text-wa-muted hover:text-wa-text bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
             >
               Sign out
             </button>
           </header>
 
-          <div className="shrink-0 p-3 bg-fs-sidebar">
+          <div className="shrink-0 p-3 bg-wa-panel">
             <div className="relative">
               <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-fs-subtle pointer-events-none"
+                className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-wa-muted pointer-events-none"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -373,16 +373,16 @@ export function App() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by name or number"
-                className="w-full rounded-lg bg-fs-surface pl-9 pr-3 py-2 text-sm outline-none border border-fs-border focus:border-fs-accent focus:ring-2 focus:ring-fs-accent/15 transition-shadow"
+                className="w-full rounded-lg bg-wa-panel2 pl-9 pr-3 py-2 text-sm outline-none border border-white/5 focus:border-wa-green/40 transition-colors"
               />
             </div>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 pb-2">
             {loadingConvs && conversations.length === 0 ? (
-              <div className="p-6 text-center text-sm text-fs-muted">Loading…</div>
+              <div className="p-6 text-center text-sm text-wa-muted">Loading…</div>
             ) : filtered.length === 0 ? (
-              <div className="p-6 text-center text-sm text-fs-muted">
+              <div className="p-6 text-center text-sm text-wa-muted">
                 {search.trim() ? "No matches for your search." : "No conversations yet."}
               </div>
             ) : (
@@ -398,26 +398,26 @@ export function App() {
                     className={[
                       "w-full text-left rounded-xl px-3 py-3 mb-1 flex gap-3 items-start transition-colors",
                       active
-                        ? "bg-fs-accentSoft ring-1 ring-fs-accent/20"
-                        : "hover:bg-fs-surface border border-transparent hover:border-fs-border"
+                        ? "bg-white/10"
+                        : "hover:bg-white/5 border border-transparent"
                     ].join(" ")}
                   >
                     <Avatar label={title} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline justify-between gap-2">
-                        <div className="font-medium text-sm text-fs-text truncate">
+                        <div className="font-medium text-sm text-wa-text truncate">
                           {title}
                         </div>
-                        <div className="text-[11px] text-fs-subtle shrink-0">
+                        <div className="text-[11px] text-wa-muted shrink-0">
                           {formatTime(c.updated_at)}
                         </div>
                       </div>
-                      <div className="text-sm text-fs-muted truncate mt-0.5">
+                      <div className="text-sm text-wa-muted truncate mt-0.5">
                         {c.last_message_preview || "No messages yet"}
                       </div>
                     </div>
                     {unread > 0 ? (
-                      <span className="shrink-0 mt-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-fs-success text-white text-xs font-semibold">
+                      <span className="shrink-0 mt-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-wa-green text-wa-bg text-xs font-semibold">
                         {unread > 99 ? "99+" : unread}
                       </span>
                     ) : null}
@@ -428,23 +428,23 @@ export function App() {
           </div>
         </aside>
 
-        <main className="h-full min-h-0 flex flex-col overflow-hidden bg-fs-bg">
-          <header className="shrink-0 px-5 py-4 bg-fs-surface border-b border-fs-border flex items-center gap-3 shadow-card">
+        <main className="h-full min-h-0 flex flex-col overflow-hidden bg-wa-bg">
+          <header className="shrink-0 px-5 py-4 bg-wa-panel2 border-b border-black/30 flex items-center gap-3">
             <Avatar label={headerLabel} />
             <div className="min-w-0 flex-1">
-              <div className="font-semibold text-fs-text truncate">{headerLabel}</div>
+              <div className="font-semibold text-wa-text truncate">{headerLabel}</div>
               {selectedConversation?.display_name ? (
-                <div className="text-xs text-fs-muted font-mono truncate">
+                <div className="text-xs text-wa-muted font-mono truncate">
                   {selectedConversation.whatsapp_user_id}
                 </div>
               ) : selectedConversation ? (
-                <div className="text-xs text-fs-muted">WhatsApp customer</div>
+                <div className="text-xs text-wa-muted">WhatsApp customer</div>
               ) : (
-                <div className="text-xs text-fs-muted">Choose a thread from the list</div>
+                <div className="text-xs text-wa-muted">Choose a thread from the list</div>
               )}
             </div>
             {selectedConversation ? (
-              <div className="text-xs text-fs-subtle shrink-0 hidden sm:block">
+              <div className="text-xs text-wa-muted shrink-0 hidden sm:block">
                 {selectedConversation.message_count} message
                 {selectedConversation.message_count === 1 ? "" : "s"}
               </div>
@@ -454,7 +454,7 @@ export function App() {
           {error ? (
             <div
               role="alert"
-              className="shrink-0 px-5 py-2.5 text-sm text-fs-danger bg-fs-dangerSoft border-b border-red-200"
+              className="shrink-0 px-5 py-2.5 text-sm text-red-300 bg-red-950/30 border-b border-red-900/30"
             >
               {error}
             </div>
@@ -462,22 +462,22 @@ export function App() {
 
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 py-6">
             {loadingMsgs && messages.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-sm text-fs-muted">
+              <div className="flex h-full items-center justify-center text-sm text-wa-muted">
                 Loading messages…
               </div>
             ) : !selectedId ? (
               <div className="flex h-full flex-col items-center justify-center text-center px-6">
-                <div className="h-16 w-16 rounded-2xl bg-fs-accentSoft text-fs-accent flex items-center justify-center text-2xl font-semibold mb-4">
+                <div className="h-16 w-16 rounded-2xl bg-wa-green/20 text-wa-green flex items-center justify-center text-2xl font-semibold mb-4">
                   FS
                 </div>
-                <p className="text-fs-text font-medium">Select a conversation</p>
-                <p className="text-sm text-fs-muted mt-1 max-w-sm">
+                <p className="text-wa-text font-medium">Select a conversation</p>
+                <p className="text-sm text-wa-muted mt-1 max-w-sm">
                   Pick a customer on the left to view their WhatsApp history with the
                   assistant.
                 </p>
               </div>
             ) : messages.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-sm text-fs-muted">
+              <div className="flex h-full items-center justify-center text-sm text-wa-muted">
                 No messages in this conversation yet.
               </div>
             ) : (
@@ -487,28 +487,20 @@ export function App() {
                   return (
                     <div
                       key={m.id}
-                      className={["flex", isAssistant ? "justify-start" : "justify-end"].join(
+                      className={["flex", isAssistant ? "justify-end" : "justify-start"].join(
                         " "
                       )}
                     >
                       <div
                         className={[
-                          "max-w-[min(85%,28rem)] rounded-2xl px-4 py-3 text-sm shadow-card",
+                          "max-w-[min(85%,28rem)] rounded-lg px-3 py-2 text-sm shadow-sm",
                           isAssistant
-                            ? "bg-fs-botBubble text-fs-text rounded-tl-md border border-fs-border"
-                            : "bg-fs-userBubble text-white rounded-tr-md"
+                            ? "bg-wa-bubbleMe text-wa-text rounded-tr-sm"
+                            : "bg-wa-bubbleThem text-wa-text rounded-tl-sm"
                         ].join(" ")}
                       >
-                        <div className="text-[10px] font-semibold uppercase tracking-wide opacity-70 mb-1">
-                          {isAssistant ? "Assistant" : "Customer"}
-                        </div>
                         <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
-                        <div
-                          className={[
-                            "mt-2 text-[11px] text-right",
-                            isAssistant ? "text-fs-subtle" : "text-white/75"
-                          ].join(" ")}
-                        >
+                        <div className="mt-1 text-[11px] text-wa-muted text-right">
                           {formatTime(m.created_at)}
                         </div>
                       </div>

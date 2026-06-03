@@ -16,7 +16,7 @@
   }
 
   body {
-    @apply bg-fs-bg text-fs-text;
+    @apply bg-wa-bg text-wa-text;
     font-family:
       ui-sans-serif,
       system-ui,
