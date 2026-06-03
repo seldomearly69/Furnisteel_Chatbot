@@ -86,9 +86,16 @@ def _require_admin_token(authorization: str | None = None) -> str:
     token = authorization.split(" ", 1)[1].strip()
     settings = get_settings()
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            options={"verify_exp": True, "require": ["exp", "sub"]},
+        )
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Token expired") from exc
     except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
     if payload.get("sub") != "admin":
         raise HTTPException(status_code=401, detail="Invalid token subject")
     return token

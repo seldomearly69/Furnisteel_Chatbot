@@ -44,7 +44,7 @@ export async function fetchConversations(token: string): Promise<ConversationRow
   const resp = await fetch(`${API_BASE}/admin/conversations`, {
     headers: authHeaders(token)
   });
-  if (resp.status === 401) throw new Error("Unauthorized");
+  if (resp.status === 401) throw new Error("Unauthorized: session expired");
   if (!resp.ok) throw new Error(`Failed to load conversations: ${resp.status}`);
   return await resp.json();
 }
@@ -57,7 +57,7 @@ export async function fetchMessages(
     `${API_BASE}/admin/conversations/${conversationId}/messages?limit=500`,
     { headers: authHeaders(token) }
   );
-  if (resp.status === 401) throw new Error("Unauthorized");
+  if (resp.status === 401) throw new Error("Unauthorized: session expired");
   if (!resp.ok) throw new Error(`Failed to load messages: ${resp.status}`);
   return await resp.json();
 }

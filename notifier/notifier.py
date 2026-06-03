@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import os
 import smtplib
@@ -105,35 +106,179 @@ def _fetch_new_customers(settings: Settings) -> list[Conversation]:
         return list(session.scalars(stmt))
 
 
-def _render_email_body(settings: Settings, customers: list[Conversation]) -> str:
+def _tz_label(dt: datetime) -> str:
+    return dt.tzname() or ""
+
+
+def _friendly_datetime(dt: datetime, tz: ZoneInfo) -> str:
+    """e.g. Mon, 2 Jun 2025 at 9:15 AM (SGT)"""
+    local = dt.astimezone(tz)
+    hour = local.strftime("%I").lstrip("0") or "12"
+    label = _tz_label(local)
+    suffix = f" ({label})" if label else ""
+    return (
+        f"{local.strftime('%a')}, {local.day} {local.strftime('%b %Y')} "
+        f"at {hour}:{local.strftime('%M %p')}{suffix}"
+    )
+
+
+def _friendly_range(start: datetime, end: datetime, tz: ZoneInfo) -> str:
+    """e.g. 2 Jun 2025, 9:00 AM – 3 Jun 2025, 9:00 AM (SGT)"""
+    s = start.astimezone(tz)
+    e = end.astimezone(tz)
+    label = _tz_label(s) or _tz_label(e)
+    suffix = f" ({label})" if label else ""
+
+    def short(d: datetime) -> str:
+        hour = d.strftime("%I").lstrip("0") or "12"
+        return f"{d.day} {d.strftime('%b %Y')}, {hour}:{d.strftime('%M %p')}"
+
+    return f"{short(s)} – {short(e)}{suffix}"
+
+
+@dataclass(frozen=True)
+class EmailContent:
+    plain: str
+    html: str
+
+
+def _render_email(settings: Settings, customers: list[Conversation]) -> EmailContent:
     tz = ZoneInfo(settings.notifier_timezone)
     window_end = _utcnow()
     window_start = window_end - timedelta(hours=24)
+    count = len(customers)
+    window_text = _friendly_range(window_start, window_end, tz)
 
-    lines: list[str] = []
-    lines.append("Furnisteel WhatsApp Chatbot — Daily new customer report")
-    lines.append("")
-    lines.append(
-        "Window: "
-        f"{window_start.astimezone(tz).isoformat()} → {window_end.astimezone(tz).isoformat()}"
-    )
-    lines.append(f"Total new customers: {len(customers)}")
-    lines.append("")
+    plain_lines: list[str] = [
+        "Furnisteel — New WhatsApp customers",
+        "",
+        f"Report period: {window_text}",
+        f"New customers: {count}",
+        "",
+    ]
 
     if not customers:
-        lines.append("No new customers in the last 24 hours.")
-        return "\n".join(lines)
+        plain_lines.append("No new customers in the last 24 hours.")
+    else:
+        plain_lines.append("Customers (newest first):")
+        plain_lines.append("")
+        for c in customers:
+            when = _friendly_datetime(c.created_at, tz)
+            name = c.display_name or "—"
+            plain_lines.append(f"  • {when}")
+            plain_lines.append(f"    Name: {name}")
+            plain_lines.append(f"    WhatsApp: {c.whatsapp_user_id}")
+            plain_lines.append("")
 
-    lines.append("New customers:")
-    for c in customers:
-        created_local = c.created_at.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
-        name = c.display_name or "-"
-        lines.append(f"- {created_local} | wa_id={c.whatsapp_user_id} | name={name}")
+    plain = "\n".join(plain_lines).rstrip() + "\n"
 
-    return "\n".join(lines)
+    if not customers:
+        rows_html = (
+            '<tr><td colspan="3" style="padding:20px 16px;text-align:center;'
+            'color:#667781;font-size:14px;">'
+            "No new customers in the last 24 hours."
+            "</td></tr>"
+        )
+    else:
+        row_parts: list[str] = []
+        for c in customers:
+            when = html.escape(_friendly_datetime(c.created_at, tz))
+            name = html.escape(c.display_name or "—")
+            wa = html.escape(c.whatsapp_user_id)
+            row_parts.append(
+                f"<tr>"
+                f'<td style="padding:12px 16px;border-bottom:1px solid #e9edef;'
+                f'color:#111b21;font-size:14px;white-space:nowrap;">{when}</td>'
+                f'<td style="padding:12px 16px;border-bottom:1px solid #e9edef;'
+                f'color:#111b21;font-size:14px;">{name}</td>'
+                f'<td style="padding:12px 16px;border-bottom:1px solid #e9edef;'
+                f'color:#54656f;font-size:14px;font-family:ui-monospace,monospace;">'
+                f"{wa}</td>"
+                f"</tr>"
+            )
+        rows_html = "\n".join(row_parts)
+
+    count_badge = (
+        f'<span style="display:inline-block;background:#25d366;color:#fff;'
+        f'font-weight:600;font-size:13px;padding:4px 10px;border-radius:12px;">'
+        f"{count}</span>"
+    )
+
+    html_body = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{html.escape(settings.email_subject)}</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f2f5;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+               style="max-width:560px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background:#075e54;padding:20px 24px;">
+              <div style="color:#ffffff;font-size:18px;font-weight:600;line-height:1.3;">
+                Furnisteel
+              </div>
+              <div style="color:#d9fdd3;font-size:13px;margin-top:4px;">
+                New WhatsApp customers
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 24px 8px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="font-size:13px;color:#667781;padding-bottom:4px;">Report period</td>
+                  <td align="right" style="font-size:13px;color:#667781;padding-bottom:4px;">New customers</td>
+                </tr>
+                <tr>
+                  <td style="font-size:15px;color:#111b21;font-weight:500;line-height:1.4;">
+                    {html.escape(window_text)}
+                  </td>
+                  <td align="right" valign="middle">{count_badge}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 8px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                     style="border-collapse:collapse;">
+                <thead>
+                  <tr style="background:#f0f2f5;">
+                    <th align="left" style="padding:10px 16px;font-size:12px;font-weight:600;color:#54656f;text-transform:uppercase;letter-spacing:0.03em;">Joined</th>
+                    <th align="left" style="padding:10px 16px;font-size:12px;font-weight:600;color:#54656f;text-transform:uppercase;letter-spacing:0.03em;">Name</th>
+                    <th align="left" style="padding:10px 16px;font-size:12px;font-weight:600;color:#54656f;text-transform:uppercase;letter-spacing:0.03em;">WhatsApp ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows_html}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 24px 20px;border-top:1px solid #e9edef;">
+              <p style="margin:0;font-size:12px;color:#8696a0;line-height:1.5;">
+                Automated daily report from the Furnisteel WhatsApp chatbot.
+                Customers are anyone who started a new conversation in the last 24 hours.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+    return EmailContent(plain=plain, html=html_body)
 
 
-def _send_email(settings: Settings, body: str) -> None:
+def _send_email(settings: Settings, content: EmailContent) -> None:
     if not settings.email_to:
         raise RuntimeError("NEW_CUSTOMERS_EMAIL_TO is required")
     if not settings.smtp_host:
@@ -149,7 +294,8 @@ def _send_email(settings: Settings, body: str) -> None:
     msg["Subject"] = settings.email_subject
     msg["From"] = from_addr
     msg["To"] = settings.email_to
-    msg.set_content(body)
+    msg.set_content(content.plain)
+    msg.add_alternative(content.html, subtype="html")
 
     logger.info(
         "Sending email via SMTP host=%s:%s to=%s subject=%s",
@@ -171,8 +317,8 @@ def run_once() -> None:
     settings = Settings.from_env()
     logger.info("Notifier run: fetching new customers (last 24h)")
     customers = _fetch_new_customers(settings)
-    body = _render_email_body(settings, customers)
-    _send_email(settings, body)
+    content = _render_email(settings, customers)
+    _send_email(settings, content)
     logger.info("Notifier run: done (customers=%d)", len(customers))
 
 
