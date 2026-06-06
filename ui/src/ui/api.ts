@@ -13,6 +13,9 @@ export type MessageRow = {
   role: "user" | "assistant" | "system";
   content: string;
   created_at: string;
+  message_type: "text" | "image";
+  media_url: string | null;
+  media_mime_type: string | null;
 };
 
 export type TokenResponse = {

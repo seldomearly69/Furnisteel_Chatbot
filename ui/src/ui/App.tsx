@@ -59,6 +59,32 @@ function initials(label: string) {
   return s.slice(0, 2).toUpperCase();
 }
 
+function MessageBody({ message }: { message: MessageRow }) {
+  const isImage = message.message_type === "image";
+  const caption =
+    message.content && message.content !== "[Image]" ? message.content : null;
+
+  if (isImage && message.media_url) {
+    return (
+      <div className="space-y-2">
+        <a href={message.media_url} target="_blank" rel="noopener noreferrer">
+          <img
+            src={message.media_url}
+            alt={caption || "Customer image"}
+            className="max-w-full rounded-md border border-black/20"
+            loading="lazy"
+          />
+        </a>
+        {caption ? (
+          <div className="whitespace-pre-wrap leading-relaxed">{caption}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>;
+}
+
 function Avatar({ label, size = "md" }: { label: string; size?: "sm" | "md" }) {
   const dim = size === "sm" ? "h-9 w-9 text-xs" : "h-11 w-11 text-sm";
   return (
@@ -499,7 +525,7 @@ export function App() {
                             : "bg-wa-bubbleThem text-wa-text rounded-tl-sm"
                         ].join(" ")}
                       >
-                        <div className="whitespace-pre-wrap leading-relaxed">{m.content}</div>
+                        <MessageBody message={m} />
                         <div className="mt-1 text-[11px] text-wa-muted text-right">
                           {formatTime(m.created_at)}
                         </div>

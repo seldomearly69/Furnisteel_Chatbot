@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import uuid
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import MessageRole
+from app.db.models import MessageRole, MessageType
 from app.db.repository import ChatRepository
 from app.rag.chroma_store import ChromaKnowledgeStore
 from app.rag.retrieval import KnowledgeRetriever
@@ -32,7 +33,14 @@ Rules:
 - For urgent safety or warranty issues, recommend contacting the company directly.
 - DO NOT respond to anything that is not related to the company or the products or services. In such cases, politely reaffirm your purpose as a customer support assistant.
 - Answer in a format suitable for WhatsApp, with no markdown formatting.
+- If a customer sends an image, acknowledge that it was received. You cannot see image contents unless they describe them in text.
 """
+
+IMAGE_RECEIVED_REPLY = (
+    "Thank you for sending the image. We have saved it and our team can review it. "
+    "If you have a question about the image, please describe it in a text message as well."
+)
+
 
 class ChatService:
     def __init__(
@@ -57,53 +65,34 @@ class ChatService:
     def _system_prompt(self) -> str:
         return DEFAULT_SYSTEM_PROMPT.format(company_name=self._settings.company_name)
 
+    def _history_content(self, message) -> str:
+        if message.message_type == MessageType.IMAGE.value:
+            caption = (message.content or "").strip()
+            if caption and caption != "[Image]":
+                return f"[Customer sent an image] {caption}"
+            return "[Customer sent an image]"
+        return message.content
+
     def _history_messages(self, conversation_id, limit: int) -> list[dict]:
         messages = self._repo.get_recent_messages(conversation_id, limit=limit)
         payload: list[dict] = []
         for message in messages:
             if message.role == MessageRole.USER:
-                payload.append({"role": "user", "content": message.content})
+                payload.append({"role": "user", "content": self._history_content(message)})
             elif message.role == MessageRole.ASSISTANT:
                 payload.append({"role": "assistant", "content": message.content})
         return payload
 
-    def generate_reply(
-        self,
-        whatsapp_user_id: str,
-        user_message: str,
-        *,
-        display_name: str | None = None,
-        whatsapp_message_id: str | None = None,
-    ) -> str:
-        conversation = self._repo.get_or_create_conversation(
-            whatsapp_user_id, display_name=display_name
-        )
-        logger.info(
-            "Chat start wa_id=%s conv_id=%s msg=%s",
-            whatsapp_user_id,
-            str(conversation.id),
-            _preview(user_message, 180),
-        )
-        self._repo.add_message(
-            conversation.id,
-            MessageRole.USER,
-            user_message,
-            whatsapp_message_id=whatsapp_message_id,
-        )
-
+    def _complete_conversation(self, conversation_id: uuid.UUID, user_message: str) -> str:
         if not self._client or not self._retriever:
-            reply = (
+            return (
                 f"Thank you for contacting {self._settings.company_name}. "
                 "Our assistant is being configured. Please try again shortly or "
                 "contact our team directly."
             )
-            self._repo.add_message(conversation.id, MessageRole.ASSISTANT, reply)
-            self._session.commit()
-            return reply
 
-        # 1) Last N messages → OpenAI → retrieval query
         history_for_retrieval = self._history_messages(
-            conversation.id, limit=self._settings.retrieval_history_messages
+            conversation_id, limit=self._settings.retrieval_history_messages
         )
         logger.info(
             "RAG history for retrieval: %d messages", len(history_for_retrieval)
@@ -114,7 +103,6 @@ class ChatService:
         if not retrieval_query:
             retrieval_query = user_message
 
-        # 2) Vector search (OpenAI embeddings) → Cohere rerank
         hits = self._retriever.retrieve(retrieval_query)
         context = self._retriever.format_context(hits)
         logger.info(
@@ -123,9 +111,8 @@ class ChatService:
             len(context),
         )
 
-        # 3) Last M messages + chunks → OpenAI chat completion
         history_for_completion = self._history_messages(
-            conversation.id, limit=self._settings.completion_history_messages
+            conversation_id, limit=self._settings.completion_history_messages
         )
         logger.info(
             "Chat completion history messages=%d", len(history_for_completion)
@@ -154,12 +141,82 @@ class ChatService:
             )
             reply = response.choices[0].message.content or ""
             logger.info("OpenAI completion done reply_chars=%d", len(reply))
+            return reply
         except Exception:
             logger.exception("OpenAI completion failed")
-            reply = (
+            return (
                 "Sorry, I am having trouble responding right now. "
                 "Please try again in a moment."
             )
+
+    def generate_reply(
+        self,
+        whatsapp_user_id: str,
+        user_message: str,
+        *,
+        display_name: str | None = None,
+        whatsapp_message_id: str | None = None,
+    ) -> str:
+        conversation = self._repo.get_or_create_conversation(
+            whatsapp_user_id, display_name=display_name
+        )
+        logger.info(
+            "Chat start wa_id=%s conv_id=%s msg=%s",
+            whatsapp_user_id,
+            str(conversation.id),
+            _preview(user_message, 180),
+        )
+        self._repo.add_message(
+            conversation.id,
+            MessageRole.USER,
+            user_message,
+            whatsapp_message_id=whatsapp_message_id,
+            message_type=MessageType.TEXT,
+        )
+
+        reply = self._complete_conversation(conversation.id, user_message)
+        self._repo.add_message(conversation.id, MessageRole.ASSISTANT, reply)
+        self._session.commit()
+        return reply
+
+    def handle_image_message(
+        self,
+        whatsapp_user_id: str,
+        *,
+        display_name: str | None = None,
+        whatsapp_message_id: str | None = None,
+        media_url: str,
+        media_key: str,
+        media_mime_type: str,
+        caption: str | None = None,
+    ) -> str:
+        conversation = self._repo.get_or_create_conversation(
+            whatsapp_user_id, display_name=display_name
+        )
+        caption_text = (caption or "").strip()
+        content = caption_text or "[Image]"
+        logger.info(
+            "Image received wa_id=%s conv_id=%s key=%s caption=%s",
+            whatsapp_user_id,
+            str(conversation.id),
+            media_key,
+            _preview(caption_text, 120),
+        )
+        self._repo.add_message(
+            conversation.id,
+            MessageRole.USER,
+            content,
+            whatsapp_message_id=whatsapp_message_id,
+            message_type=MessageType.IMAGE,
+            media_url=media_url,
+            media_key=media_key,
+            media_mime_type=media_mime_type,
+        )
+
+        if caption_text:
+            reply = self._complete_conversation(conversation.id, caption_text)
+        else:
+            reply = IMAGE_RECEIVED_REPLY
 
         self._repo.add_message(conversation.id, MessageRole.ASSISTANT, reply)
         self._session.commit()

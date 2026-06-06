@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.db.models import ChatMessage, MessageType
 from app.db.repository import ChatRepository
 from app.db.session import get_session_factory
 from app.db.session import init_db
@@ -232,6 +233,23 @@ class MessageRow(BaseModel):
     role: str
     content: str
     created_at: str
+    message_type: str = "text"
+    media_url: str | None = None
+    media_mime_type: str | None = None
+
+
+def _message_preview(message: ChatMessage, limit: int = 120) -> str:
+    if message.message_type == MessageType.IMAGE.value:
+        caption = (message.content or "").strip()
+        if caption and caption != "[Image]":
+            text = f"📷 {caption}"
+        else:
+            text = "📷 Image"
+    else:
+        text = message.content or ""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
 
 
 @app.get("/admin/conversations", response_model=list[ConversationRow])
@@ -247,7 +265,7 @@ async def list_conversations(
         rows: list[ConversationRow] = []
         for conv in conversations:
             last_msgs = repo.get_recent_messages(conv.id, limit=1)
-            last_preview = last_msgs[0].content[:120] if last_msgs else None
+            last_preview = _message_preview(last_msgs[0]) if last_msgs else None
             rows.append(
                 ConversationRow(
                     id=str(conv.id),
@@ -290,6 +308,9 @@ async def get_conversation_messages(
                 role=m.role.value,
                 content=m.content,
                 created_at=m.created_at.isoformat(),
+                message_type=m.message_type or MessageType.TEXT.value,
+                media_url=m.media_url,
+                media_mime_type=m.media_mime_type,
             )
             for m in msgs
         ]

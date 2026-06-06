@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import ChatMessage, Conversation, MessageRole
+from app.db.models import ChatMessage, Conversation, MessageRole, MessageType
 
 
 class ChatRepository:
@@ -35,13 +35,24 @@ class ChatRepository:
         conversation_id: uuid.UUID,
         role: MessageRole,
         content: str,
+        *,
         whatsapp_message_id: str | None = None,
+        message_type: MessageType | str = MessageType.TEXT,
+        media_url: str | None = None,
+        media_key: str | None = None,
+        media_mime_type: str | None = None,
     ) -> ChatMessage:
+        if isinstance(message_type, MessageType):
+            message_type = message_type.value
         message = ChatMessage(
             conversation_id=conversation_id,
             role=role,
             content=content,
             whatsapp_message_id=whatsapp_message_id,
+            message_type=message_type,
+            media_url=media_url,
+            media_key=media_key,
+            media_mime_type=media_mime_type,
         )
         self._session.add(message)
         self._session.flush()

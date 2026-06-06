@@ -57,6 +57,16 @@ class Settings(BaseSettings):
         "http://localhost:3000,http://127.0.0.1:3000,https://dashboard.fmfurnisteel.com"
     )
 
+    # Cloudflare R2 (S3-compatible) for WhatsApp image storage
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = ""
+    r2_public_url_base: str = ""
+    r2_key_prefix: str = "whatsapp"
+    r2_endpoint_url: str = ""
+    r2_region: str = "auto"
+
     @property
     def chroma_http_url(self) -> str:
         return f"http://{self.chroma_host}:{self.chroma_port}"
