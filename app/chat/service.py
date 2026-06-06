@@ -31,6 +31,7 @@ Rules:
 - Do not invent specifications, prices, or policies.
 - For urgent safety or warranty issues, recommend contacting the company directly.
 - DO NOT respond to anything that is not related to the company or the products or services. In such cases, politely reaffirm your purpose as a customer support assistant.
+- Answer in a format suitable for WhatsApp, with no markdown formatting.
 """
 
 class ChatService:
