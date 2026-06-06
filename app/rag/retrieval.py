@@ -9,7 +9,7 @@ from openai import OpenAI
 from app.config import get_settings
 from app.rag.chroma_store import ChromaKnowledgeStore
 from app.rag.rerank import CohereReranker
-from app.chat.openai_content import content_as_text
+from app.utils.openai_content import content_as_text
 
 logger = logging.getLogger(__name__)
 
