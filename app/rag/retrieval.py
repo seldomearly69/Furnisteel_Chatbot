@@ -9,6 +9,7 @@ from openai import OpenAI
 from app.config import get_settings
 from app.rag.chroma_store import ChromaKnowledgeStore
 from app.rag.rerank import CohereReranker
+from app.chat.openai_content import content_as_text
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +55,14 @@ class KnowledgeRetriever:
             return ""
 
         if len(history) == 1 and history[0].get("role") == "user":
-            query = history[0]["content"].strip()
+            query = content_as_text(history[0]["content"]).strip()
             logger.info("RAG querygen bypass (single user msg): %s", _preview(query, 120))
             return query
 
         logger.info(
             "RAG querygen input messages=%d last=%s",
             len(history),
-            _preview(history[-1].get("content", ""), 160),
+            _preview(content_as_text(history[-1].get("content", "")), 160),
         )
         response = self._client.chat.completions.create(
             model=self._settings.openai_retrieval_query_model,

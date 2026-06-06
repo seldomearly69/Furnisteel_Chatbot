@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Any
 
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import MessageRole, MessageType
+from app.db.models import ChatMessage, MessageRole, MessageType
 from app.db.repository import ChatRepository
 from app.rag.chroma_store import ChromaKnowledgeStore
 from app.rag.retrieval import KnowledgeRetriever
 
 logger = logging.getLogger(__name__)
+
+IMAGE_ONLY_USER_TEXT = "The customer sent this image."
 
 def _preview(text: str, limit: int = 240) -> str:
     text = (text or "").replace("\n", "\\n")
@@ -33,13 +36,8 @@ Rules:
 - For urgent safety or warranty issues, recommend contacting the company directly.
 - DO NOT respond to anything that is not related to the company or the products or services. In such cases, politely reaffirm your purpose as a customer support assistant.
 - Answer in a format suitable for WhatsApp, with no markdown formatting.
-- If a customer sends an image, acknowledge that it was received. You cannot see image contents unless they describe them in text.
+- When the customer sends an image, look at it carefully and relate your answer to what you see, using the knowledge base where relevant.
 """
-
-IMAGE_RECEIVED_REPLY = (
-    "Thank you for sending the image. We have saved it and our team can review it. "
-    "If you have a question about the image, please describe it in a text message as well."
-)
 
 
 class ChatService:
@@ -65,7 +63,13 @@ class ChatService:
     def _system_prompt(self) -> str:
         return DEFAULT_SYSTEM_PROMPT.format(company_name=self._settings.company_name)
 
-    def _history_content(self, message) -> str:
+    def _image_user_text(self, message: ChatMessage) -> str:
+        caption = (message.content or "").strip()
+        if caption and caption != "[Image]":
+            return caption
+        return IMAGE_ONLY_USER_TEXT
+
+    def _history_text_content(self, message: ChatMessage) -> str:
         if message.message_type == MessageType.IMAGE.value:
             caption = (message.content or "").strip()
             if caption and caption != "[Image]":
@@ -73,17 +77,62 @@ class ChatService:
             return "[Customer sent an image]"
         return message.content
 
-    def _history_messages(self, conversation_id, limit: int) -> list[dict]:
+    def _history_text_messages(self, conversation_id, limit: int) -> list[dict]:
         messages = self._repo.get_recent_messages(conversation_id, limit=limit)
         payload: list[dict] = []
         for message in messages:
             if message.role == MessageRole.USER:
-                payload.append({"role": "user", "content": self._history_content(message)})
+                payload.append(
+                    {"role": "user", "content": self._history_text_content(message)}
+                )
             elif message.role == MessageRole.ASSISTANT:
                 payload.append({"role": "assistant", "content": message.content})
         return payload
 
-    def _complete_conversation(self, conversation_id: uuid.UUID, user_message: str) -> str:
+    def _openai_user_message(self, message: ChatMessage) -> dict[str, Any]:
+        if (
+            message.message_type == MessageType.IMAGE.value
+            and message.media_url
+        ):
+            parts: list[dict[str, Any]] = [
+                {"type": "text", "text": self._image_user_text(message)},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": message.media_url,
+                        "detail": self._settings.openai_vision_detail,
+                    },
+                },
+            ]
+            return {"role": "user", "content": parts}
+
+        return {"role": "user", "content": message.content}
+
+    def _history_openai_messages(self, conversation_id, limit: int) -> list[dict]:
+        messages = self._repo.get_recent_messages(conversation_id, limit=limit)
+        payload: list[dict] = []
+        image_count = 0
+        for message in messages:
+            if message.role == MessageRole.USER:
+                payload.append(self._openai_user_message(message))
+                if (
+                    message.message_type == MessageType.IMAGE.value
+                    and message.media_url
+                ):
+                    image_count += 1
+            elif message.role == MessageRole.ASSISTANT:
+                payload.append({"role": "assistant", "content": message.content})
+        if image_count:
+            logger.info(
+                "Vision completion history images=%d messages=%d",
+                image_count,
+                len(payload),
+            )
+        return payload
+
+    def _complete_conversation(
+        self, conversation_id: uuid.UUID, user_message: str
+    ) -> str:
         if not self._client or not self._retriever:
             return (
                 f"Thank you for contacting {self._settings.company_name}. "
@@ -91,7 +140,7 @@ class ChatService:
                 "contact our team directly."
             )
 
-        history_for_retrieval = self._history_messages(
+        history_for_retrieval = self._history_text_messages(
             conversation_id, limit=self._settings.retrieval_history_messages
         )
         logger.info(
@@ -111,7 +160,7 @@ class ChatService:
             len(context),
         )
 
-        history_for_completion = self._history_messages(
+        history_for_completion = self._history_openai_messages(
             conversation_id, limit=self._settings.completion_history_messages
         )
         logger.info(
@@ -131,8 +180,13 @@ class ChatService:
 
         try:
             logger.info(
-                "OpenAI completion start model=%s",
+                "OpenAI completion start model=%s vision=%s",
                 self._settings.openai_model,
+                any(
+                    isinstance(m.get("content"), list)
+                    for m in history_for_completion
+                    if m.get("role") == "user"
+                ),
             )
             response = self._client.chat.completions.create(
                 model=self._settings.openai_model,
@@ -196,10 +250,11 @@ class ChatService:
         caption_text = (caption or "").strip()
         content = caption_text or "[Image]"
         logger.info(
-            "Image received wa_id=%s conv_id=%s key=%s caption=%s",
+            "Image received wa_id=%s conv_id=%s key=%s url=%s caption=%s",
             whatsapp_user_id,
             str(conversation.id),
             media_key,
+            media_url,
             _preview(caption_text, 120),
         )
         self._repo.add_message(
@@ -213,11 +268,8 @@ class ChatService:
             media_mime_type=media_mime_type,
         )
 
-        if caption_text:
-            reply = self._complete_conversation(conversation.id, caption_text)
-        else:
-            reply = IMAGE_RECEIVED_REPLY
-
+        query_hint = caption_text or "[Customer sent an image]"
+        reply = self._complete_conversation(conversation.id, query_hint)
         self._repo.add_message(conversation.id, MessageRole.ASSISTANT, reply)
         self._session.commit()
         return reply

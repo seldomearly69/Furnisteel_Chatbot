@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_retrieval_query_model: str = "gpt-4o-mini"
+    openai_vision_detail: str = "auto"
 
     whatsapp_token: str = ""
     whatsapp_phone_id: str = ""
