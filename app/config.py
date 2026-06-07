@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # Retrieval
     rag_top_k: int = 5
     rag_candidate_k: int = 25
+    rag_image_top_k: int = 12
+    rag_image_candidate_k: int = 40
     retrieval_history_messages: int = 5
     completion_history_messages: int = 10
 

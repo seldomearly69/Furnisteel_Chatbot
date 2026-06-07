@@ -7,7 +7,9 @@ import logging
 from openai import OpenAI
 
 from app.config import get_settings
+from app.ingestion.image_metadata import extract_image_url, extract_section_title
 from app.rag.chroma_store import ChromaKnowledgeStore
+from app.rag.image_intent import is_image_intent
 from app.rag.rerank import CohereReranker
 from app.utils.openai_content import content_as_text
 
@@ -76,17 +78,31 @@ class KnowledgeRetriever:
         logger.info("RAG querygen output: %s", _preview(query, 200))
         return query
 
-    def retrieve(self, query: str) -> list[dict]:
+    def retrieve(self, query: str, *, user_message: str = "") -> list[dict]:
         """Embed-search in ChromaDB, then rerank candidates with Cohere."""
         if not query.strip():
             return []
 
+        image_intent = is_image_intent(query) or is_image_intent(user_message)
+        top_k = (
+            self._settings.rag_image_top_k
+            if image_intent
+            else self._settings.rag_top_k
+        )
+        candidate_k = (
+            self._settings.rag_image_candidate_k
+            if image_intent
+            else self._settings.rag_candidate_k
+        )
+
         logger.info(
-            "RAG vector search start candidates_k=%d query=%s",
-            self._settings.rag_candidate_k,
+            "RAG vector search start image_intent=%s candidates_k=%d top_k=%d query=%s",
+            image_intent,
+            candidate_k,
+            top_k,
             _preview(query, 160),
         )
-        candidates = self._store.query(query, top_k=self._settings.rag_candidate_k)
+        candidates = self._store.query(query, top_k=candidate_k)
         if not candidates:
             logger.info("RAG vector search: 0 candidates")
             return []
@@ -107,17 +123,17 @@ class KnowledgeRetriever:
             logger.warning(
                 "COHERE_API_KEY not set; returning vector search results without rerank"
             )
-            return candidates[: self._settings.rag_top_k]
+            return candidates[:top_k]
 
         logger.info(
             "RAG rerank start model=%s top_n=%d",
             self._settings.cohere_rerank_model,
-            self._settings.rag_top_k,
+            top_k,
         )
         ranked = self._get_reranker().rerank(
             query=query,
             documents=[c["text"] for c in candidates],
-            top_n=self._settings.rag_top_k,
+            top_n=top_k,
         )
         hits: list[dict] = []
         for result in ranked:
@@ -129,21 +145,45 @@ class KnowledgeRetriever:
         for i, h in enumerate(hits, start=1):
             meta = h.get("metadata") or {}
             logger.debug(
-                "RAG hit[%d] score=%.4f source=%s chunk=%s text=%s",
+                "RAG hit[%d] score=%.4f source=%s chunk=%s image=%s text=%s",
                 i,
                 float(h.get("rerank_score") or 0.0),
                 meta.get("source_file", "unknown"),
                 meta.get("chunk_index", "?"),
+                bool(meta.get("image_url")),
                 _preview(h.get("text", ""), 200),
             )
         return hits
 
     @staticmethod
-    def format_context(hits: list[dict]) -> str:
+    def collect_image_entries(hits: list[dict]) -> list[tuple[str, str]]:
+        entries: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for hit in hits:
+            meta = hit.get("metadata") or {}
+            url = meta.get("image_url") or extract_image_url(hit.get("text", ""))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            title = meta.get("image_title") or extract_section_title(hit.get("text", ""))
+            entries.append((title or "Project image", url))
+        return entries
+
+    @classmethod
+    def format_context(cls, hits: list[dict]) -> str:
         if not hits:
             return "No relevant knowledge base entries found."
 
         parts: list[str] = []
+        image_entries = cls.collect_image_entries(hits)
+        if image_entries:
+            lines = [f"- {title}: {url}" for title, url in image_entries]
+            parts.append(
+                "Available images in retrieved context "
+                f"({len(image_entries)} total — use these exact URLs for [[IMAGE:...]]):\n"
+                + "\n".join(lines)
+            )
+
         for index, hit in enumerate(hits, start=1):
             source = hit["metadata"].get("source_file", "unknown")
             score = hit.get("rerank_score")
@@ -151,4 +191,5 @@ class KnowledgeRetriever:
             if score is not None:
                 header += f" (relevance: {score:.3f})"
             parts.append(f"{header}\n{hit['text']}")
+
         return "\n\n---\n\n".join(parts)

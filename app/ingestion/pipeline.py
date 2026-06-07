@@ -7,7 +7,16 @@ import logging
 from pathlib import Path
 
 from app.config import get_settings
-from app.ingestion.markdown_chunker import chunk_markdown_sections, parse_markdown_sections
+from app.ingestion.markdown_chunker import (
+    MarkdownSection,
+    chunk_markdown_sections,
+    parse_markdown_sections,
+)
+from app.ingestion.image_metadata import (
+    extract_image_url,
+    extract_section_title,
+    section_has_image_url,
+)
 from app.rag.chroma_store import ChromaKnowledgeStore
 
 logger = logging.getLogger(__name__)
@@ -46,11 +55,20 @@ class DocumentIngestionPipeline:
                 digest.update(block)
         return digest.hexdigest()
 
+    @staticmethod
+    def _chunk_sections(path: Path, sections: list[MarkdownSection]) -> list[str]:
+        is_gallery = "gallery" in path.name.lower() or any(
+            section_has_image_url(s.body) for s in sections
+        )
+        if is_gallery:
+            return [s.render() for s in sections if s.render().strip()]
+        return chunk_markdown_sections(sections)
+
     def ingest_file(self, path: Path) -> int:
         logger.info("Processing markdown %s", path)
         content = path.read_text(encoding="utf-8")
         sections = parse_markdown_sections(content)
-        chunk_texts = chunk_markdown_sections(sections)
+        chunk_texts = self._chunk_sections(path, sections)
 
         if not chunk_texts:
             logger.warning("No chunks produced for %s", path)
@@ -59,17 +77,24 @@ class DocumentIngestionPipeline:
         file_hash = self._file_hash(path)
         records: list[dict] = []
         for index, text in enumerate(chunk_texts):
+            metadata = {
+                "source_file": path.name,
+                "source_path": str(path),
+                "file_hash": file_hash,
+                "chunk_index": index,
+                "format": "markdown",
+            }
+            image_url = extract_image_url(text)
+            if image_url:
+                metadata["image_url"] = image_url
+                title = extract_section_title(text)
+                if title:
+                    metadata["image_title"] = title
             records.append(
                 {
                     "id": f"{file_hash}:{index}",
                     "text": text,
-                    "metadata": {
-                        "source_file": path.name,
-                        "source_path": str(path),
-                        "file_hash": file_hash,
-                        "chunk_index": index,
-                        "format": "markdown",
-                    },
+                    "metadata": metadata,
                 }
             )
 

@@ -39,6 +39,7 @@ Rules:
 - Answer in a format suitable for WhatsApp, with no markdown formatting.
 - When the customer sends an image, look at it carefully and relate your answer to what you see, using the knowledge base where relevant.
 - To send an image, add its own line: [[IMAGE:https://public-url]] (public https URL only, from knowledge base). Up to {max_outbound_images} per reply. These lines are not shown as text — WhatsApp delivers them as images. Write your visible reply as normal text; do not describe the marker syntax to the customer.
+- When the customer asks to see project photos or examples, pick several relevant URLs from the "Available images in retrieved context" list and send up to {max_outbound_images} [[IMAGE:url]] markers. Do not claim you only have one image if multiple are listed in context.
 """
 
 
@@ -195,11 +196,13 @@ class ChatService:
         if not retrieval_query:
             retrieval_query = user_message
 
-        hits = self._retriever.retrieve(retrieval_query)
+        hits = self._retriever.retrieve(retrieval_query, user_message=user_message)
         context = self._retriever.format_context(hits)
+        image_count = len(KnowledgeRetriever.collect_image_entries(hits))
         logger.info(
-            "RAG context ready hits=%d context_chars=%d",
+            "RAG context ready hits=%d images=%d context_chars=%d",
             len(hits),
+            image_count,
             len(context),
         )
 
