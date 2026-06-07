@@ -10,6 +10,7 @@ from app.chat.service import ChatService
 from app.config import get_settings
 from app.db.session import get_session_factory
 from app.storage.r2 import get_r2_storage
+from app.whatsapp.outbound import deliver_assistant_reply
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def register_whatsapp_handlers(wa: WhatsApp) -> None:
                 whatsapp_message_id=message.id,
             )
 
-        await message.reply_text(reply)
+        await deliver_assistant_reply(message, reply)
 
     @wa.on_message(filters.image)
     async def on_image(_wa: WhatsApp, message: types.Message):
@@ -122,7 +123,7 @@ def register_whatsapp_handlers(wa: WhatsApp) -> None:
                 caption=caption,
             )
 
-        await message.reply_text(reply)
+        await deliver_assistant_reply(message, reply)
 
     @wa.on_message(~filters.text & ~filters.image)
     async def on_unsupported(_wa: WhatsApp, message: types.Message):

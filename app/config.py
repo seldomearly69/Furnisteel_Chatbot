@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_retrieval_query_model: str = "gpt-4o-mini"
     openai_vision_detail: str = "auto"
+    max_outbound_images: int = 5
 
     whatsapp_token: str = ""
     whatsapp_phone_id: str = ""

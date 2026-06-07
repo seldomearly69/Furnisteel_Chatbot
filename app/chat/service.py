@@ -9,6 +9,7 @@ from typing import Any
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
+from app.chat.reply_parser import AssistantReply, parse_assistant_reply
 from app.config import get_settings
 from app.db.models import ChatMessage, MessageRole, MessageType
 from app.db.repository import ChatRepository
@@ -37,6 +38,7 @@ Rules:
 - DO NOT respond to anything that is not related to the company or the products or services. In such cases, politely reaffirm your purpose as a customer support assistant.
 - Answer in a format suitable for WhatsApp, with no markdown formatting.
 - When the customer sends an image, look at it carefully and relate your answer to what you see, using the knowledge base where relevant.
+- To send an image, add its own line: [[IMAGE:https://public-url]] (public https URL only, from knowledge base). Up to {max_outbound_images} per reply. These lines are not shown as text — WhatsApp delivers them as images. Write your visible reply as normal text; do not describe the marker syntax to the customer.
 """
 
 
@@ -61,21 +63,52 @@ class ChatService:
         )
 
     def _system_prompt(self) -> str:
-        return DEFAULT_SYSTEM_PROMPT.format(company_name=self._settings.company_name)
-
-    def _image_user_text(self, message: ChatMessage) -> str:
-        caption = (message.content or "").strip()
-        if caption and caption != "[Image]":
-            return caption
-        return IMAGE_ONLY_USER_TEXT
+        return DEFAULT_SYSTEM_PROMPT.format(
+            company_name=self._settings.company_name,
+            max_outbound_images=self._settings.max_outbound_images,
+        )
 
     def _history_text_content(self, message: ChatMessage) -> str:
         if message.message_type == MessageType.IMAGE.value:
             caption = (message.content or "").strip()
+            if message.role == MessageRole.ASSISTANT:
+                return "[Assistant sent an image]"
             if caption and caption != "[Image]":
                 return f"[Customer sent an image] {caption}"
             return "[Customer sent an image]"
         return message.content
+
+    def _parse_and_log_reply(self, raw: str) -> AssistantReply:
+        reply = parse_assistant_reply(
+            raw, max_images=self._settings.max_outbound_images
+        )
+        if reply.image_urls:
+            logger.info(
+                "Assistant reply images=%d text_chars=%d",
+                len(reply.image_urls),
+                len(reply.text),
+            )
+        return reply
+
+    def _save_assistant_reply(
+        self, conversation_id: uuid.UUID, reply: AssistantReply
+    ) -> None:
+        if reply.text:
+            self._repo.add_message(
+                conversation_id,
+                MessageRole.ASSISTANT,
+                reply.text,
+                message_type=MessageType.TEXT,
+            )
+        for url in reply.image_urls:
+            self._repo.add_message(
+                conversation_id,
+                MessageRole.ASSISTANT,
+                "[Image]",
+                message_type=MessageType.IMAGE,
+                media_url=url,
+                media_mime_type="image/jpeg",
+            )
 
     def _history_text_messages(self, conversation_id, limit: int) -> list[dict]:
         messages = self._repo.get_recent_messages(conversation_id, limit=limit)
@@ -86,8 +119,16 @@ class ChatService:
                     {"role": "user", "content": self._history_text_content(message)}
                 )
             elif message.role == MessageRole.ASSISTANT:
-                payload.append({"role": "assistant", "content": message.content})
+                payload.append(
+                    {"role": "assistant", "content": self._history_text_content(message)}
+                )
         return payload
+
+    def _image_user_text(self, message: ChatMessage) -> str:
+        caption = (message.content or "").strip()
+        if caption and caption != "[Image]":
+            return caption
+        return IMAGE_ONLY_USER_TEXT
 
     def _openai_user_message(self, message: ChatMessage) -> dict[str, Any]:
         if (
@@ -121,7 +162,9 @@ class ChatService:
                 ):
                     image_count += 1
             elif message.role == MessageRole.ASSISTANT:
-                payload.append({"role": "assistant", "content": message.content})
+                payload.append(
+                    {"role": "assistant", "content": self._history_text_content(message)}
+                )
         if image_count:
             logger.info(
                 "Vision completion history images=%d messages=%d",
@@ -210,7 +253,7 @@ class ChatService:
         *,
         display_name: str | None = None,
         whatsapp_message_id: str | None = None,
-    ) -> str:
+    ) -> AssistantReply:
         conversation = self._repo.get_or_create_conversation(
             whatsapp_user_id, display_name=display_name
         )
@@ -228,8 +271,9 @@ class ChatService:
             message_type=MessageType.TEXT,
         )
 
-        reply = self._complete_conversation(conversation.id, user_message)
-        self._repo.add_message(conversation.id, MessageRole.ASSISTANT, reply)
+        raw = self._complete_conversation(conversation.id, user_message)
+        reply = self._parse_and_log_reply(raw)
+        self._save_assistant_reply(conversation.id, reply)
         self._session.commit()
         return reply
 
@@ -243,7 +287,7 @@ class ChatService:
         media_key: str,
         media_mime_type: str,
         caption: str | None = None,
-    ) -> str:
+    ) -> AssistantReply:
         conversation = self._repo.get_or_create_conversation(
             whatsapp_user_id, display_name=display_name
         )
@@ -269,7 +313,8 @@ class ChatService:
         )
 
         query_hint = caption_text or "[Customer sent an image]"
-        reply = self._complete_conversation(conversation.id, query_hint)
-        self._repo.add_message(conversation.id, MessageRole.ASSISTANT, reply)
+        raw = self._complete_conversation(conversation.id, query_hint)
+        reply = self._parse_and_log_reply(raw)
+        self._save_assistant_reply(conversation.id, reply)
         self._session.commit()
         return reply
