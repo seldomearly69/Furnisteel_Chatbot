@@ -111,6 +111,28 @@ class ChatService:
                 media_mime_type="image/jpeg",
             )
 
+    def _is_first_customer_message(self, conversation_id: uuid.UUID) -> bool:
+        return self._repo.count_messages(conversation_id) == 0
+
+    def _maybe_first_message_greeting(
+        self,
+        conversation_id: uuid.UUID,
+        whatsapp_user_id: str,
+        *,
+        is_first_message: bool,
+    ) -> AssistantReply | None:
+        if not is_first_message or not self._settings.first_message_greeting_enabled:
+            return None
+
+        greeting = self._settings.resolved_first_message_greeting()
+        logger.info(
+            "First message greeting wa_id=%s conv_id=%s chars=%d",
+            whatsapp_user_id,
+            str(conversation_id),
+            len(greeting),
+        )
+        return AssistantReply(text=greeting, image_urls=[], raw=greeting)
+
     def _history_text_messages(self, conversation_id, limit: int) -> list[dict]:
         messages = self._repo.get_recent_messages(conversation_id, limit=limit)
         payload: list[dict] = []
@@ -260,10 +282,12 @@ class ChatService:
         conversation = self._repo.get_or_create_conversation(
             whatsapp_user_id, display_name=display_name
         )
+        is_first_message = self._is_first_customer_message(conversation.id)
         logger.info(
-            "Chat start wa_id=%s conv_id=%s msg=%s",
+            "Chat start wa_id=%s conv_id=%s first=%s msg=%s",
             whatsapp_user_id,
             str(conversation.id),
+            is_first_message,
             _preview(user_message, 180),
         )
         self._repo.add_message(
@@ -273,6 +297,14 @@ class ChatService:
             whatsapp_message_id=whatsapp_message_id,
             message_type=MessageType.TEXT,
         )
+
+        greeting = self._maybe_first_message_greeting(
+            conversation.id, whatsapp_user_id, is_first_message=is_first_message
+        )
+        if greeting:
+            self._save_assistant_reply(conversation.id, greeting)
+            self._session.commit()
+            return greeting
 
         raw = self._complete_conversation(conversation.id, user_message)
         reply = self._parse_and_log_reply(raw)
@@ -294,12 +326,14 @@ class ChatService:
         conversation = self._repo.get_or_create_conversation(
             whatsapp_user_id, display_name=display_name
         )
+        is_first_message = self._is_first_customer_message(conversation.id)
         caption_text = (caption or "").strip()
         content = caption_text or "[Image]"
         logger.info(
-            "Image received wa_id=%s conv_id=%s key=%s url=%s caption=%s",
+            "Image received wa_id=%s conv_id=%s first=%s key=%s url=%s caption=%s",
             whatsapp_user_id,
             str(conversation.id),
+            is_first_message,
             media_key,
             media_url,
             _preview(caption_text, 120),
@@ -314,6 +348,14 @@ class ChatService:
             media_key=media_key,
             media_mime_type=media_mime_type,
         )
+
+        greeting = self._maybe_first_message_greeting(
+            conversation.id, whatsapp_user_id, is_first_message=is_first_message
+        )
+        if greeting:
+            self._save_assistant_reply(conversation.id, greeting)
+            self._session.commit()
+            return greeting
 
         query_hint = caption_text or "[Customer sent an image]"
         raw = self._complete_conversation(conversation.id, query_hint)

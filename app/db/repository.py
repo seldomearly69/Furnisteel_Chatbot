@@ -58,6 +58,14 @@ class ChatRepository:
         self._session.flush()
         return message
 
+    def count_messages(self, conversation_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(ChatMessage)
+            .where(ChatMessage.conversation_id == conversation_id)
+        )
+        return int(self._session.scalar(stmt) or 0)
+
     def get_recent_messages(
         self, conversation_id: uuid.UUID, limit: int = 20
     ) -> list[ChatMessage]:

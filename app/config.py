@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     app_port: int = 8080
     documents_dir: str = "./data/documents"
     company_name: str = "Furnisteel Systems Pte Ltd"
+    first_message_greeting_enabled: bool = True
+    first_message_greeting: str = ""
     admin_api_key: str = ""
     jwt_secret: str = "change-me-in-production"
     jwt_access_token_exp_minutes: int = 720
@@ -74,6 +76,17 @@ class Settings(BaseSettings):
     @property
     def chroma_http_url(self) -> str:
         return f"http://{self.chroma_host}:{self.chroma_port}"
+
+    def resolved_first_message_greeting(self) -> str:
+        """Greeting sent on a customer's first message (no RAG). Set via FIRST_MESSAGE_GREETING in .env."""
+        default = (
+            "Hello! Thank you for contacting {company_name}.\n\n"
+            "I'm here to help with questions about our products, services, and past projects. "
+            "How can I assist you today?"
+        )
+        template = (self.first_message_greeting or default).strip()
+        text = template.replace("{company_name}", self.company_name)
+        return text.replace("\\n", "\n")
 
 
 @lru_cache
