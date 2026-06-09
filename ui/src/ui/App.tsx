@@ -4,7 +4,7 @@ import {
   MessageRow,
   exchangeApiKeyForToken,
   fetchConversations,
-  fetchMessages
+  fetchMessagesPage
 } from "./api";
 import {
   clearToken,
@@ -17,6 +17,18 @@ import {
 const READ_COUNTS_KEY = "furnisteel_read_counts";
 const POLL_INTERVAL_MS = 10_000;
 const SESSION_CHECK_MS = 15_000;
+const MESSAGES_PAGE_SIZE = 50;
+const SCROLL_LOAD_THRESHOLD = 120;
+
+function mergeMessages(existing: MessageRow[], incoming: MessageRow[]): MessageRow[] {
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  for (const message of incoming) {
+    byId.set(message.id, message);
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+}
 
 function loadReadCounts(): Record<string, number> {
   try {
@@ -179,9 +191,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [readCounts, setReadCounts] = useState<Record<string, number>>(loadReadCounts);
   const selectedIdRef = useRef<string | null>(selectedId);
+  const messagesRef = useRef<MessageRow[]>(messages);
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   selectedIdRef.current = selectedId;
+  messagesRef.current = messages;
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedId) || null,
@@ -204,6 +221,7 @@ export function App() {
     setToken(null);
     setConversations([]);
     setMessages([]);
+    setHasMoreOlder(false);
     setSelectedId(null);
     if (message) setError(message);
   }, []);
@@ -240,6 +258,110 @@ export function App() {
     });
   }
 
+  const scrollMessagesToBottom = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const isMessagesNearBottom = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_LOAD_THRESHOLD;
+  }, []);
+
+  const loadLatestMessages = useCallback(
+    async (
+      activeToken: string,
+      conversationId: string,
+      options: { silent?: boolean; scrollToBottom?: boolean } = {}
+    ) => {
+      const { silent = false, scrollToBottom = true } = options;
+      if (!silent) setLoadingMsgs(true);
+      try {
+        const page = await fetchMessagesPage(activeToken, conversationId, {
+          limit: MESSAGES_PAGE_SIZE
+        });
+        setMessages(page.messages);
+        setHasMoreOlder(page.has_more);
+        if (scrollToBottom) {
+          requestAnimationFrame(() => scrollMessagesToBottom());
+        }
+        return page;
+      } finally {
+        if (!silent) setLoadingMsgs(false);
+      }
+    },
+    [scrollMessagesToBottom]
+  );
+
+  const pollNewMessages = useCallback(
+    async (activeToken: string, conversationId: string) => {
+      const current = messagesRef.current;
+      if (!current.length) {
+        await loadLatestMessages(activeToken, conversationId, {
+          silent: true,
+          scrollToBottom: isMessagesNearBottom()
+        });
+        return;
+      }
+
+      const last = current[current.length - 1];
+      const page = await fetchMessagesPage(activeToken, conversationId, {
+        limit: MESSAGES_PAGE_SIZE,
+        after: last.created_at
+      });
+      if (!page.messages.length) return;
+
+      const wasNearBottom = isMessagesNearBottom();
+      setMessages((prev) => mergeMessages(prev, page.messages));
+      if (wasNearBottom) {
+        requestAnimationFrame(() => scrollMessagesToBottom());
+      }
+    },
+    [isMessagesNearBottom, loadLatestMessages, scrollMessagesToBottom]
+  );
+
+  const loadOlderMessages = useCallback(async () => {
+    const activeToken = ensureValidToken();
+    const conversationId = selectedIdRef.current;
+    if (!activeToken || !conversationId || loadingOlder || !hasMoreOlder) return;
+
+    const current = messagesRef.current;
+    if (!current.length) return;
+
+    const el = messagesScrollRef.current;
+    const prevScrollHeight = el?.scrollHeight ?? 0;
+    setLoadingOlder(true);
+    try {
+      const page = await fetchMessagesPage(activeToken, conversationId, {
+        limit: MESSAGES_PAGE_SIZE,
+        before: current[0].created_at
+      });
+      setMessages((prev) => mergeMessages(page.messages, prev));
+      setHasMoreOlder(page.has_more);
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - prevScrollHeight;
+      });
+    } catch (e: any) {
+      const msg = e?.message || "";
+      if (msg.includes("Unauthorized") || msg.includes("expired")) {
+        logout("Session expired. Please sign in again.");
+        return;
+      }
+      setError(msg || "Failed to load older messages");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [ensureValidToken, hasMoreOlder, loadingOlder, logout]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el || loadingOlder || !hasMoreOlder) return;
+    if (el.scrollTop <= SCROLL_LOAD_THRESHOLD) {
+      void loadOlderMessages();
+    }
+  }, [hasMoreOlder, loadOlderMessages, loadingOlder]);
+
   const refreshAll = useCallback(
     async (silent = false, activeConversationId?: string | null) => {
       const activeToken = ensureValidToken();
@@ -269,12 +391,21 @@ export function App() {
 
         if (conversationId) {
           const open = data.find((c) => c.id === conversationId);
-          const msgs = await fetchMessages(activeToken, conversationId);
-          setMessages(msgs);
-          const count = Math.max(open?.message_count ?? 0, msgs.length);
+          if (silent) {
+            if (conversationId === selectedIdRef.current) {
+              await pollNewMessages(activeToken, conversationId);
+            }
+          } else {
+            await loadLatestMessages(activeToken, conversationId, {
+              silent: false,
+              scrollToBottom: true
+            });
+          }
+          const count = Math.max(open?.message_count ?? 0, messagesRef.current.length);
           markConversationRead(conversationId, count);
         } else {
           setMessages([]);
+          setHasMoreOlder(false);
         }
       } catch (e: any) {
         const msg = e?.message || "";
@@ -292,11 +423,13 @@ export function App() {
         }
       }
     },
-    [ensureValidToken, logout]
+    [ensureValidToken, loadLatestMessages, logout, pollNewMessages]
   );
 
   function openConversation(conv: ConversationRow) {
     setSelectedId(conv.id);
+    setMessages([]);
+    setHasMoreOlder(false);
     markConversationRead(conv.id, conv.message_count);
     void refreshAll(false, conv.id);
   }
@@ -486,7 +619,11 @@ export function App() {
             </div>
           ) : null}
 
-          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 py-6">
+          <div
+            ref={messagesScrollRef}
+            onScroll={handleMessagesScroll}
+            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 py-6"
+          >
             {loadingMsgs && messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-sm text-wa-muted">
                 Loading messages…
@@ -508,6 +645,11 @@ export function App() {
               </div>
             ) : (
               <div className="space-y-4 max-w-3xl mx-auto w-full">
+                {hasMoreOlder ? (
+                  <div className="text-center py-2 text-xs text-wa-muted">
+                    {loadingOlder ? "Loading older messages…" : "Scroll up for older messages"}
+                  </div>
+                ) : null}
                 {messages.map((m) => {
                   const isAssistant = m.role === "assistant";
                   return (

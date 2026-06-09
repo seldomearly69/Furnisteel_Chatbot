@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -104,6 +105,70 @@ class ChatRepository:
             .offset(offset)
         )
         return list(self._session.scalars(stmt))
+
+    def get_latest_messages(
+        self, conversation_id: uuid.UUID, *, limit: int = 50
+    ) -> list[ChatMessage]:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.conversation_id == conversation_id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        messages = list(self._session.scalars(stmt))
+        messages.reverse()
+        return messages
+
+    def get_messages_before(
+        self,
+        conversation_id: uuid.UUID,
+        before: datetime,
+        *,
+        limit: int = 50,
+    ) -> list[ChatMessage]:
+        stmt = (
+            select(ChatMessage)
+            .where(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.created_at < before,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        messages = list(self._session.scalars(stmt))
+        messages.reverse()
+        return messages
+
+    def get_messages_after(
+        self,
+        conversation_id: uuid.UUID,
+        after: datetime,
+        *,
+        limit: int = 50,
+    ) -> list[ChatMessage]:
+        stmt = (
+            select(ChatMessage)
+            .where(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.created_at > after,
+            )
+            .order_by(ChatMessage.created_at.asc())
+            .limit(limit)
+        )
+        return list(self._session.scalars(stmt))
+
+    def has_messages_before(
+        self, conversation_id: uuid.UUID, before: datetime
+    ) -> bool:
+        stmt = (
+            select(func.count())
+            .select_from(ChatMessage)
+            .where(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.created_at < before,
+            )
+        )
+        return int(self._session.scalar(stmt) or 0) > 0
 
     def get_message_counts(self, conversation_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         if not conversation_ids:

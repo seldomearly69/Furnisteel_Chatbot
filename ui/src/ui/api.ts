@@ -18,6 +18,11 @@ export type MessageRow = {
   media_mime_type: string | null;
 };
 
+export type MessagesPage = {
+  messages: MessageRow[];
+  has_more: boolean;
+};
+
 export type TokenResponse = {
   access_token: string;
   token_type: "bearer";
@@ -52,16 +57,28 @@ export async function fetchConversations(token: string): Promise<ConversationRow
   return await resp.json();
 }
 
-export async function fetchMessages(
+export type FetchMessagesOptions = {
+  limit?: number;
+  before?: string;
+  after?: string;
+};
+
+export async function fetchMessagesPage(
   token: string,
-  conversationId: string
-): Promise<MessageRow[]> {
+  conversationId: string,
+  options: FetchMessagesOptions = {}
+): Promise<MessagesPage> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  if (options.after) params.set("after", options.after);
+
+  const query = params.toString();
   const resp = await fetch(
-    `${API_BASE}/admin/conversations/${conversationId}/messages?limit=500`,
+    `${API_BASE}/admin/conversations/${conversationId}/messages${query ? `?${query}` : ""}`,
     { headers: authHeaders(token) }
   );
   if (resp.status === 401) throw new Error("Unauthorized: session expired");
   if (!resp.ok) throw new Error(`Failed to load messages: ${resp.status}`);
   return await resp.json();
 }
-

@@ -238,6 +238,26 @@ class MessageRow(BaseModel):
     media_mime_type: str | None = None
 
 
+class MessagesPage(BaseModel):
+    messages: list[MessageRow]
+    has_more: bool
+
+
+def _serialize_messages(msgs: list[ChatMessage]) -> list[MessageRow]:
+    return [
+        MessageRow(
+            id=str(m.id),
+            role=m.role.value,
+            content=m.content,
+            created_at=m.created_at.isoformat(),
+            message_type=m.message_type or MessageType.TEXT.value,
+            media_url=m.media_url,
+            media_mime_type=m.media_mime_type,
+        )
+        for m in msgs
+    ]
+
+
 def _message_preview(message: ChatMessage, limit: int = 120) -> str:
     if message.message_type == MessageType.IMAGE.value:
         caption = (message.content or "").strip()
@@ -280,14 +300,26 @@ async def list_conversations(
         return rows
 
 
-@app.get("/admin/conversations/{conversation_id}/messages", response_model=list[MessageRow])
+@app.get(
+    "/admin/conversations/{conversation_id}/messages",
+    response_model=MessagesPage,
+)
 async def get_conversation_messages(
     conversation_id: str,
-    limit: int = 500,
-    offset: int = 0,
+    limit: int = 50,
+    before: str | None = None,
+    after: str | None = None,
     _auth=Depends(_admin_auth_dep),
 ):
     import uuid
+    from datetime import datetime
+
+    if before and after:
+        raise HTTPException(
+            status_code=400, detail="Use either before or after, not both"
+        )
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
 
     try:
         conv_uuid = uuid.UUID(conversation_id)
@@ -301,16 +333,30 @@ async def get_conversation_messages(
         if not conv:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-        msgs = repo.get_messages(conv_uuid, limit=limit, offset=offset)
-        return [
-            MessageRow(
-                id=str(m.id),
-                role=m.role.value,
-                content=m.content,
-                created_at=m.created_at.isoformat(),
-                message_type=m.message_type or MessageType.TEXT.value,
-                media_url=m.media_url,
-                media_mime_type=m.media_mime_type,
+        if after:
+            try:
+                after_dt = datetime.fromisoformat(after)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail="Invalid after timestamp") from e
+            msgs = repo.get_messages_after(conv_uuid, after_dt, limit=limit)
+            return MessagesPage(messages=_serialize_messages(msgs), has_more=False)
+
+        if before:
+            try:
+                before_dt = datetime.fromisoformat(before)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid before timestamp"
+                ) from e
+            msgs = repo.get_messages_before(conv_uuid, before_dt, limit=limit)
+            has_more = bool(
+                msgs
+                and repo.has_messages_before(conv_uuid, msgs[0].created_at)
             )
-            for m in msgs
-        ]
+            return MessagesPage(messages=_serialize_messages(msgs), has_more=has_more)
+
+        msgs = repo.get_latest_messages(conv_uuid, limit=limit)
+        has_more = bool(
+            msgs and repo.has_messages_before(conv_uuid, msgs[0].created_at)
+        )
+        return MessagesPage(messages=_serialize_messages(msgs), has_more=has_more)
