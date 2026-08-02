@@ -241,6 +241,7 @@ class ChatService:
         except Exception:
             logger.exception("RAG query decomposition failed, falling back to single query")
             return [user_message]
+        
     def _rerank_merged_hits(self, hits: list[dict], user_message: str) -> list[dict]:
         """Re-rank the combined pool from all sub-queries against the original
         customer message, then cap to a percentage of the merged pool size."""
@@ -316,7 +317,38 @@ class ChatService:
         # cosine distance -> similarity: 1 - (distance / 2), clamped to [0, 1]
         best_distance = min(h.get("distance", 2.0) for h in hits)
         return max(0.0, min(1.0, 1 - (best_distance / 2)))
-    
+
+    def _dedupe_hits(self, hits: list[dict]) -> list[dict]:
+        """Remove duplicate chunks from a merged hit pool. Prefers metadata identity
+        (source_file + chunk_index) since that's stable even if text formatting
+        differs slightly; falls back to normalized text comparison if metadata
+        is missing. Keeps the first occurrence (assumes hits are already in the
+        order you want to prioritize, e.g. by confidence/score)."""
+        seen_keys: set[str] = set()
+        deduped: list[dict] = []
+
+        for hit in hits:
+            meta = hit.get("metadata") or {}
+            source = meta.get("source_file")
+            chunk_index = meta.get("chunk_index")
+
+            if source is not None and chunk_index is not None:
+                key = f"{source}::{chunk_index}"
+            else:
+                # fallback: normalize whitespace/case so near-identical text collapses
+                normalized = " ".join((hit.get("text") or "").lower().split())
+                key = f"text::{normalized}"
+
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(hit)
+
+        if len(deduped) < len(hits):
+            logger.info("RAG dedup: %d hits -> %d after removing duplicates", len(hits), len(deduped))
+
+        return deduped
+
     def _complete_conversation(
         self, conversation_id: uuid.UUID, user_message: str
     ) -> str:
@@ -339,7 +371,6 @@ class ChatService:
 
         # --- confidence: gate each sub-query's retrieval independently ---
         all_hits: list[dict] = []
-        seen_texts: set[str] = set()
         query_labels: list[str] = []
 
         for sub_query in sub_queries:
@@ -347,12 +378,9 @@ class ChatService:
                 sub_query, user_message
             )
             query_labels.append(f"{final_query} (score={sub_score:.2f})")
-            for hit in sub_hits:
-                text = hit.get("text", "")
-                if text not in seen_texts:
-                    seen_texts.add(text)
-                    all_hits.append(hit)
+            all_hits.extend(sub_hits)
 
+        all_hits = self._dedupe_hits(all_hits)
         all_hits = self._rerank_merged_hits(all_hits, user_message)
         context = self._retriever.format_context(all_hits)
         image_count = len(KnowledgeRetriever.collect_image_entries(all_hits))
