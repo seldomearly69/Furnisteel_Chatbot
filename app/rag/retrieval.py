@@ -22,16 +22,16 @@ def _preview(text: str, limit: int = 240) -> str:
     return text[:limit] + "…"
 
 
-RETRIEVAL_QUERY_SYSTEM = """You generate search queries for a company knowledge base.
+# RETRIEVAL_QUERY_SYSTEM = """You generate search queries for a company knowledge base.
 
-Given the recent conversation (especially the latest user messages), write one concise search query that will retrieve the most relevant documentation.
+# Given the recent conversation (especially the latest user messages), write one concise search query that will retrieve the most relevant documentation.
 
-Rules:
-- Output ONLY the query text (no quotes, labels, or explanation).
-- Resolve pronouns and follow-ups using conversation context (e.g. "it" → the product being discussed).
-- Include product names, model numbers, policies, or technical terms when relevant.
-- Prefer specific nouns over full sentences.
-"""
+# Rules:
+# - Output ONLY the query text (no quotes, labels, or explanation).
+# - Resolve pronouns and follow-ups using conversation context (e.g. "it" → the product being discussed).
+# - Include product names, model numbers, policies, or technical terms when relevant.
+# - Prefer specific nouns over full sentences.
+# """
 
 
 class KnowledgeRetriever:
@@ -51,32 +51,32 @@ class KnowledgeRetriever:
             self._reranker = CohereReranker()
         return self._reranker
 
-    def generate_retrieval_query(self, history: list[dict]) -> str:
-        """Turn the last N conversation messages into a search query via OpenAI."""
-        if not history:
-            return ""
+    # def generate_retrieval_query(self, history: list[dict]) -> str:
+    #     """Turn the last N conversation messages into a search query via OpenAI."""
+    #     if not history:
+    #         return ""
 
-        if len(history) == 1 and history[0].get("role") == "user":
-            query = content_as_text(history[0]["content"]).strip()
-            logger.info("RAG querygen bypass (single user msg): %s", _preview(query, 120))
-            return query
+    #     if len(history) == 1 and history[0].get("role") == "user":
+    #         query = content_as_text(history[0]["content"]).strip()
+    #         logger.info("RAG querygen bypass (single user msg): %s", _preview(query, 120))
+    #         return query
 
-        logger.info(
-            "RAG querygen input messages=%d last=%s",
-            len(history),
-            _preview(content_as_text(history[-1].get("content", "")), 160),
-        )
-        response = self._client.chat.completions.create(
-            model=self._settings.openai_retrieval_query_model,
-            messages=[
-                {"role": "system", "content": RETRIEVAL_QUERY_SYSTEM},
-                *history,
-            ],
-            temperature=0.0,
-        )
-        query = (response.choices[0].message.content or "").strip()
-        logger.info("RAG querygen output: %s", _preview(query, 200))
-        return query
+    #     logger.info(
+    #         "RAG querygen input messages=%d last=%s",
+    #         len(history),
+    #         _preview(content_as_text(history[-1].get("content", "")), 160),
+    #     )
+    #     response = self._client.chat.completions.create(
+    #         model=self._settings.openai_retrieval_query_model,
+    #         messages=[
+    #             {"role": "system", "content": RETRIEVAL_QUERY_SYSTEM},
+    #             *history,
+    #         ],
+    #         temperature=0.0,
+    #     )
+    #     query = (response.choices[0].message.content or "").strip()
+    #     logger.info("RAG querygen output: %s", _preview(query, 200))
+    #     return query
 
     def retrieve(self, query: str, *, user_message: str = "") -> list[dict]:
         """Embed-search in ChromaDB, then rerank candidates with Cohere."""
@@ -160,7 +160,7 @@ class KnowledgeRetriever:
         context = self.format_context(hits)
         top_score = max((h.get("rerank_score") or 0.0) for h in hits) if hits else 0.0
         return context, top_score
-    
+        
     @staticmethod
     def collect_image_entries(hits: list[dict]) -> list[tuple[str, str]]:
         entries: list[tuple[str, str]] = []

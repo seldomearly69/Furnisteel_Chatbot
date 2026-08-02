@@ -41,7 +41,21 @@ Rules:
 - To send an image, add its own line: [[IMAGE:https://public-url]] (public https URL only, from knowledge base). Up to {max_outbound_images} per reply. These lines are not shown as text — WhatsApp delivers them as images. Write your visible reply as normal text; do not describe the marker syntax to the customer.
 - When the customer asks to see project photos or examples, pick several relevant URLs from the "Available images in retrieved context" list and send up to {max_outbound_images} [[IMAGE:url]] markers. Do not claim you only have one image if multiple are listed in context.
 """
+QUERY_SPLIT_SYSTEM = """You prepare search queries for a company knowledge base, given a customer support conversation.
 
+Step 1 — Resolve intent: Look at the full conversation and determine what the customer currently wants answered. Resolve pronouns and references using context (e.g. "it", "that one", "the first option" → the actual product/policy being discussed). If earlier questions in the conversation were already answered, focus only on what is being asked now — do not re-retrieve for resolved topics.
+
+Step 2 — Decompose into atomic sub-queries: Break the current request into the smallest set of independent search queries needed to fully cover it. Each sub-query should target exactly ONE discrete fact, entity, attribute, or comparison point — not a compound question.
+
+Rules for decomposition:
+- If the customer asks about a single attribute of a single entity ("what's the warranty on your steel doors"), output ONE query. Do not invent extra splits.
+- If the customer asks about multiple attributes of the same entity ("warranty AND installation coverage for steel doors"), output ONE query per attribute: "steel door warranty", "steel door installation coverage".
+- If the customer asks about multiple entities (even without "and" — e.g. "difference between steel and aluminum doors"), output ONE query per entity: "steel door specifications", "aluminum door specifications".
+- If the customer message is vague or a follow-up with no new distinct facts needed ("ok what about pricing"), resolve it against context into ONE concrete query, e.g. "steel door pricing".
+- Never split a single atomic fact into multiple redundant phrasings of the same thing.
+
+Output ONLY the search queries, one per line, in plain text. No numbering, no labels, no explanation.
+"""
 
 class ChatService:
     def __init__(
@@ -196,29 +210,37 @@ class ChatService:
             )
         return payload
 
-    def _split_compound_query(self, query: str) -> list[str]:
-        """If query has multiple sub-questions, split for separate retrieval."""
+    def _split_compound_query(self, history: list[dict], user_message: str) -> list[str]:
+        """Resolve conversation context and decompose the current request into
+        atomic sub-queries for maximum retrieval coverage. Replaces the old
+        generate_retrieval_query + split two-step with a single context-aware pass."""
+        messages = list(history) if history else []
+        if not messages or messages[-1].get("content") != user_message:
+            messages = messages + [{"role": "user", "content": user_message}]
+
         try:
             response = self._client.chat.completions.create(
                 model=self._settings.openai_retrieval_query_model,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "If this customer message contains multiple distinct questions "
-                        "or requests, split it into separate search queries, one per line, "
-                        "max 3. If it's a single question, return it unchanged.\n\n"
-                        f"Message: {query}"
-                    ),
-                }],
+                messages=[
+                    {"role": "system", "content": QUERY_SPLIT_SYSTEM},
+                    *messages,
+                ],
                 temperature=0.0,
             )
-            lines = [l.strip() for l in (response.choices[0].message.content or "").split("\n") if l.strip()]
-            result = lines[:3] or [query]
-            logger.info("RAG query split into %d sub-queries: %s", len(result), result)
+            lines = [
+                l.strip()
+                for l in (response.choices[0].message.content or "").split("\n")
+                if l.strip()
+            ]
+            result = lines[:4] or [user_message]
+            logger.info(
+                "RAG query decomposition: %d sub-queries from %d history messages: %s",
+                len(result), len(messages), result,
+            )
             return result
         except Exception:
-            logger.exception("RAG query split failed, falling back to single query")
-            return [query]
+            logger.exception("RAG query decomposition failed, falling back to single query")
+            return [user_message]
 
     def _retrieve_with_confidence_loop(self, query: str, user_message: str) -> tuple[list[dict], float, str]:
         """Confidence-gated retrieval for ONE query. Returns (hits, top_score, final_query_used)."""
@@ -246,6 +268,7 @@ class ChatService:
                 query_used = self._refine_retrieval_query(query_used, user_message, weak_context)
 
         return hits, top_score, query
+    
     def _complete_conversation(
         self, conversation_id: uuid.UUID, user_message: str
     ) -> str:
@@ -262,14 +285,9 @@ class ChatService:
         logger.info(
             "RAG history for retrieval: %d messages", len(history_for_retrieval)
         )
-        retrieval_query = self._retriever.generate_retrieval_query(
-            history_for_retrieval
-        )
-        if not retrieval_query:
-            retrieval_query = user_message
 
-         # --- coverage: split compound questions into sub-queries ---
-        sub_queries = self._split_compound_query(retrieval_query)
+        # --- coverage: resolve intent + decompose into atomic sub-queries in one pass ---
+        sub_queries = self._split_compound_query(history_for_retrieval, user_message)
 
         # --- confidence: gate each sub-query's retrieval independently ---
         all_hits: list[dict] = []
