@@ -78,7 +78,7 @@ class KnowledgeRetriever:
     #     logger.info("RAG querygen output: %s", _preview(query, 200))
     #     return query
 
-    def retrieve(self, query: str, *, user_message: str = "") -> list[dict]:
+    def retrieve(self, query: str, *, user_message: str = "", skip_rerank: bool = False) -> list[dict]:
         """Embed-search in ChromaDB, then rerank candidates with Cohere."""
         if not query.strip():
             return []
@@ -119,6 +119,12 @@ class KnowledgeRetriever:
                 _preview(c.get("text", ""), 200),
             )
 
+        if skip_rerank:
+            logger.info(
+                "Rerank skipped. Returning results without rerank"
+            )
+            return candidates[:top_k]
+        
         if not self._settings.cohere_api_key:
             logger.warning(
                 "COHERE_API_KEY not set; returning vector search results without rerank"

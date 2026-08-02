@@ -241,7 +241,42 @@ class ChatService:
         except Exception:
             logger.exception("RAG query decomposition failed, falling back to single query")
             return [user_message]
+    def _rerank_merged_hits(self, hits: list[dict], user_message: str) -> list[dict]:
+        """Re-rank the combined pool from all sub-queries against the original
+        customer message, then cap to a percentage of the merged pool size."""
+        if not hits:
+            return hits
 
+        cap = max(1, round(len(hits) * self._settings.rag_final_context_pct))
+
+        if len(hits) <= cap:
+            return hits  # nothing to trim
+
+        if not self._settings.cohere_api_key:
+            hits_sorted = sorted(hits, key=lambda h: h.get("distance", 2.0))
+            return hits_sorted[:cap]
+
+        try:
+            reranker = self._retriever._get_reranker()
+            ranked = reranker.rerank(
+                query=user_message,
+                documents=[h["text"] for h in hits],
+                top_n=cap,
+            )
+            final_hits = []
+            for result in ranked:
+                hit = dict(hits[result.index])
+                hit["rerank_score"] = result.score
+                final_hits.append(hit)
+            logger.info(
+                "RAG final rerank: %d merged hits -> %d after %.0f%% cap",
+                len(hits), len(final_hits), self._settings.rag_final_context_pct * 100,
+            )
+            return final_hits
+        except Exception:
+            logger.exception("RAG final rerank failed, truncating without re-scoring")
+            return hits[:cap]
+    
     def _retrieve_with_confidence_loop(self, query: str, user_message: str) -> tuple[list[dict], float, str]:
         """Confidence-gated retrieval for ONE query. Returns (hits, top_confidence, final_query_used).
         Uses vector distance when Cohere rerank is unavailable (lower distance = better match,
@@ -251,7 +286,7 @@ class ChatService:
         query_used = query
 
         for round_num in range(1, self._settings.rag_max_retrieval_rounds + 1):
-            round_hits = self._retriever.retrieve(query_used, user_message=user_message)
+            round_hits = self._retriever.retrieve(query_used, user_message=user_message, skip_rerank=True)
             round_confidence = self._best_confidence(round_hits)
 
             logger.info(
@@ -318,6 +353,7 @@ class ChatService:
                     seen_texts.add(text)
                     all_hits.append(hit)
 
+        all_hits = self._rerank_merged_hits(all_hits, user_message)
         context = self._retriever.format_context(all_hits)
         image_count = len(KnowledgeRetriever.collect_image_entries(all_hits))
         logger.info(
