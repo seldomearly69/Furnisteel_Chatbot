@@ -198,8 +198,6 @@ class ChatService:
 
     def _split_compound_query(self, query: str) -> list[str]:
         """If query has multiple sub-questions, split for separate retrieval."""
-        if " and " not in query.lower() and query.count("?") <= 1:
-            return [query]
         try:
             response = self._client.chat.completions.create(
                 model=self._settings.openai_retrieval_query_model,
