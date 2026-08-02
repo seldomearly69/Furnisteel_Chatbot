@@ -243,31 +243,44 @@ class ChatService:
             return [user_message]
 
     def _retrieve_with_confidence_loop(self, query: str, user_message: str) -> tuple[list[dict], float, str]:
-        """Confidence-gated retrieval for ONE query. Returns (hits, top_score, final_query_used)."""
+        """Confidence-gated retrieval for ONE query. Returns (hits, top_confidence, final_query_used).
+        Uses vector distance when Cohere rerank is unavailable (lower distance = better match,
+        so we convert to a 0-1 'confidence' score where higher is better, for consistency)."""
         hits: list[dict] = []
-        top_score = 0.0
+        top_confidence = 0.0
         query_used = query
 
         for round_num in range(1, self._settings.rag_max_retrieval_rounds + 1):
             round_hits = self._retriever.retrieve(query_used, user_message=user_message)
-            round_score = max((h.get("rerank_score") or 0.0) for h in round_hits) if round_hits else 0.0
+            round_confidence = self._best_confidence(round_hits)
 
             logger.info(
-                "RAG retrieval round=%d query=%s score=%.3f",
-                round_num, _preview(query_used, 120), round_score,
+                "RAG retrieval round=%d query=%s confidence=%.3f",
+                round_num, _preview(query_used, 120), round_confidence,
             )
 
-            if round_score > top_score:
-                hits, top_score, query = round_hits, round_score, query_used
+            if round_confidence > top_confidence:
+                hits, top_confidence, query = round_hits, round_confidence, query_used
 
-            if top_score >= self._settings.rag_confidence_threshold:
+            if top_confidence >= self._settings.rag_confidence_threshold:
                 break
 
             if round_num < self._settings.rag_max_retrieval_rounds:
                 weak_context = self._retriever.format_context(round_hits)
                 query_used = self._refine_retrieval_query(query_used, user_message, weak_context)
 
-        return hits, top_score, query
+        return hits, top_confidence, query
+
+    def _best_confidence(self, hits: list[dict]) -> float:
+        """Return a 0-1 confidence score for the best hit, using rerank_score if present,
+        otherwise deriving from vector distance (cosine: 0=identical, 2=opposite)."""
+        if not hits:
+            return 0.0
+        if hits[0].get("rerank_score") is not None:
+            return max(h.get("rerank_score") or 0.0 for h in hits)
+        # cosine distance -> similarity: 1 - (distance / 2), clamped to [0, 1]
+        best_distance = min(h.get("distance", 2.0) for h in hits)
+        return max(0.0, min(1.0, 1 - (best_distance / 2)))
     
     def _complete_conversation(
         self, conversation_id: uuid.UUID, user_message: str
