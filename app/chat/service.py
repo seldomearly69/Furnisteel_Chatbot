@@ -325,7 +325,7 @@ class ChatService:
             {
                 "role": "system",
                 "content": (
-                    f"Knowledge base context (search query: {retrieval_query}):\n\n"
+                    f"Knowledge base context (search queries: {'; '.join(query_labels)}):\n\n"
                     f"{context}"
                 ),
             },
