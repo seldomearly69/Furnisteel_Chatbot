@@ -155,6 +155,12 @@ class KnowledgeRetriever:
             )
         return hits
 
+    def retrieve_with_confidence(self, query: str, *, user_message: str = "") -> tuple[str, float]:
+        hits = self.retrieve(query, user_message=user_message)
+        context = self.format_context(hits)
+        top_score = max((h.get("rerank_score") or 0.0) for h in hits) if hits else 0.0
+        return context, top_score
+    
     @staticmethod
     def collect_image_entries(hits: list[dict]) -> list[tuple[str, str]]:
         entries: list[tuple[str, str]] = []

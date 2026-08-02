@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     rag_image_candidate_k: int = 40
     retrieval_history_messages: int = 5
     completion_history_messages: int = 10
+    rag_confidence_threshold: float = 0.4
+    rag_max_retrieval_rounds: int = 2
 
     # Reranking (Cohere)
     cohere_api_key: str = ""

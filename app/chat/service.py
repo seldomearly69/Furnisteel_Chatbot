@@ -218,7 +218,33 @@ class ChatService:
         if not retrieval_query:
             retrieval_query = user_message
 
-        hits = self._retriever.retrieve(retrieval_query, user_message=user_message)
+        hits: list[dict] = []
+        top_score = 0.0
+        query_used = retrieval_query
+
+        for round_num in range(1, self._settings.rag_max_retrieval_rounds + 1):
+            round_hits = self._retriever.retrieve(query_used, user_message=user_message)
+            round_score = max((h.get("rerank_score") or 0.0) for h in round_hits) if round_hits else 0.0
+
+            logger.info(
+                "RAG retrieval round=%d query=%s score=%.3f",
+                round_num, _preview(query_used, 120), round_score,
+            )
+
+            if round_score > top_score:
+                hits, top_score, retrieval_query = round_hits, round_score, query_used
+
+            if top_score >= self._settings.rag_confidence_threshold:
+                break  # good enough, stop looping
+
+            if round_num < self._settings.rag_max_retrieval_rounds:
+                weak_context = self._retriever.format_context(round_hits)
+                query_used = self._refine_retrieval_query(query_used, user_message, weak_context)
+
+        logger.info(
+            "RAG loop done rounds=%d final_score=%.3f query=%s",
+            round_num, top_score, _preview(retrieval_query, 120),
+)
         context = self._retriever.format_context(hits)
         image_count = len(KnowledgeRetriever.collect_image_entries(hits))
         logger.info(
@@ -311,7 +337,32 @@ class ChatService:
         self._save_assistant_reply(conversation.id, reply)
         self._session.commit()
         return reply
-
+    def _refine_retrieval_query(
+        self, original_query: str, user_message: str, weak_context: str
+    ) -> str:
+        """Ask the model for a better search query when the first retrieval was weak."""
+        prompt = (
+            "The following search query returned weak/low-relevance results from a "
+            "knowledge base. Suggest ONE alternative search query that might retrieve "
+            "better matches. Consider synonyms, more specific terms, or a different "
+            "angle on the same question. Output ONLY the new query text.\n\n"
+            f"Original query: {original_query}\n"
+            f"Customer's actual message: {user_message}\n"
+            f"Weak results preview: {weak_context[:400]}"
+        )
+        try:
+            response = self._client.chat.completions.create(
+                model=self._settings.openai_retrieval_query_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+            )
+            refined = (response.choices[0].message.content or "").strip()
+            logger.info("RAG refinement query=%s", _preview(refined, 160))
+            return refined or original_query
+        except Exception:
+            logger.exception("RAG query refinement failed")
+            return original_query
+        
     def handle_image_message(
         self,
         whatsapp_user_id: str,
