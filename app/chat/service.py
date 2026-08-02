@@ -196,6 +196,58 @@ class ChatService:
             )
         return payload
 
+    def _split_compound_query(self, query: str) -> list[str]:
+        """If query has multiple sub-questions, split for separate retrieval."""
+        if " and " not in query.lower() and query.count("?") <= 1:
+            return [query]
+        try:
+            response = self._client.chat.completions.create(
+                model=self._settings.openai_retrieval_query_model,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "If this customer message contains multiple distinct questions "
+                        "or requests, split it into separate search queries, one per line, "
+                        "max 3. If it's a single question, return it unchanged.\n\n"
+                        f"Message: {query}"
+                    ),
+                }],
+                temperature=0.0,
+            )
+            lines = [l.strip() for l in (response.choices[0].message.content or "").split("\n") if l.strip()]
+            result = lines[:3] or [query]
+            logger.info("RAG query split into %d sub-queries: %s", len(result), result)
+            return result
+        except Exception:
+            logger.exception("RAG query split failed, falling back to single query")
+            return [query]
+
+    def _retrieve_with_confidence_loop(self, query: str, user_message: str) -> tuple[list[dict], float, str]:
+        """Confidence-gated retrieval for ONE query. Returns (hits, top_score, final_query_used)."""
+        hits: list[dict] = []
+        top_score = 0.0
+        query_used = query
+
+        for round_num in range(1, self._settings.rag_max_retrieval_rounds + 1):
+            round_hits = self._retriever.retrieve(query_used, user_message=user_message)
+            round_score = max((h.get("rerank_score") or 0.0) for h in round_hits) if round_hits else 0.0
+
+            logger.info(
+                "RAG retrieval round=%d query=%s score=%.3f",
+                round_num, _preview(query_used, 120), round_score,
+            )
+
+            if round_score > top_score:
+                hits, top_score, query = round_hits, round_score, query_used
+
+            if top_score >= self._settings.rag_confidence_threshold:
+                break
+
+            if round_num < self._settings.rag_max_retrieval_rounds:
+                weak_context = self._retriever.format_context(round_hits)
+                query_used = self._refine_retrieval_query(query_used, user_message, weak_context)
+
+        return hits, top_score, query
     def _complete_conversation(
         self, conversation_id: uuid.UUID, user_message: str
     ) -> str:
@@ -218,38 +270,30 @@ class ChatService:
         if not retrieval_query:
             retrieval_query = user_message
 
-        hits: list[dict] = []
-        top_score = 0.0
-        query_used = retrieval_query
+         # --- coverage: split compound questions into sub-queries ---
+        sub_queries = self._split_compound_query(retrieval_query)
 
-        for round_num in range(1, self._settings.rag_max_retrieval_rounds + 1):
-            round_hits = self._retriever.retrieve(query_used, user_message=user_message)
-            round_score = max((h.get("rerank_score") or 0.0) for h in round_hits) if round_hits else 0.0
+        # --- confidence: gate each sub-query's retrieval independently ---
+        all_hits: list[dict] = []
+        seen_texts: set[str] = set()
+        query_labels: list[str] = []
 
-            logger.info(
-                "RAG retrieval round=%d query=%s score=%.3f",
-                round_num, _preview(query_used, 120), round_score,
+        for sub_query in sub_queries:
+            sub_hits, sub_score, final_query = self._retrieve_with_confidence_loop(
+                sub_query, user_message
             )
+            query_labels.append(f"{final_query} (score={sub_score:.2f})")
+            for hit in sub_hits:
+                text = hit.get("text", "")
+                if text not in seen_texts:
+                    seen_texts.add(text)
+                    all_hits.append(hit)
 
-            if round_score > top_score:
-                hits, top_score, retrieval_query = round_hits, round_score, query_used
-
-            if top_score >= self._settings.rag_confidence_threshold:
-                break  # good enough, stop looping
-
-            if round_num < self._settings.rag_max_retrieval_rounds:
-                weak_context = self._retriever.format_context(round_hits)
-                query_used = self._refine_retrieval_query(query_used, user_message, weak_context)
-
-        logger.info(
-            "RAG loop done rounds=%d final_score=%.3f query=%s",
-            round_num, top_score, _preview(retrieval_query, 120),
-)
-        context = self._retriever.format_context(hits)
-        image_count = len(KnowledgeRetriever.collect_image_entries(hits))
+        context = self._retriever.format_context(all_hits)
+        image_count = len(KnowledgeRetriever.collect_image_entries(all_hits))
         logger.info(
             "RAG context ready hits=%d images=%d context_chars=%d",
-            len(hits),
+            len(all_hits),
             image_count,
             len(context),
         )
