@@ -105,7 +105,7 @@ class KnowledgeRetriever:
         
         candidates = self._store.query(query, top_k=candidate_k)
         if not image_intent:
-            candidates = [c for c in candidates if (c.get("metadata") or {}).get("source_file") != "furnisteel_knowledge_base.md"]
+            candidates = [c for c in candidates if (c.get("metadata") or {}).get("source_file") != "furnisteel_project_gallery.md"]
 
         if not candidates:
             logger.info("RAG vector search: 0 candidates")
