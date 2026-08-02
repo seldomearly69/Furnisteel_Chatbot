@@ -102,7 +102,11 @@ class KnowledgeRetriever:
             top_k,
             _preview(query, 160),
         )
+        
         candidates = self._store.query(query, top_k=candidate_k)
+        if not image_intent:
+            candidates = [c for c in candidates if (c.get("metadata") or {}).get("source_file") != "furnisteel_knowledge_base.md"]
+
         if not candidates:
             logger.info("RAG vector search: 0 candidates")
             return []
@@ -166,7 +170,40 @@ class KnowledgeRetriever:
         context = self.format_context(hits)
         top_score = max((h.get("rerank_score") or 0.0) for h in hits) if hits else 0.0
         return context, top_score
-        
+
+    def retrieve_images(self, query: str, top_k: int | None = None) -> list[dict]:
+        """Retrieve chunks specifically for image/gallery lookups. Only returns
+        candidates that have an image_url in metadata — never pricing/spec-only text."""
+        k = top_k or self._settings.rag_image_top_k
+        candidate_k = self._settings.rag_image_candidate_k
+
+        candidates = self._store.query(query, top_k=candidate_k)
+        image_candidates = [c for c in candidates if (c.get("metadata") or {}).get("image_url")]
+
+        logger.info(
+            "RAG image search query=%s candidates=%d image_candidates=%d",
+            _preview(query, 120), len(candidates), len(image_candidates),
+        )
+
+        if not image_candidates:
+            return []
+
+        if not self._settings.cohere_api_key:
+            return image_candidates[:k]
+
+        ranked = self._get_reranker().rerank(
+            query=query,
+            documents=[c["text"] for c in image_candidates],
+            top_n=min(k, len(image_candidates)),
+        )
+        hits: list[dict] = []
+        for result in ranked:
+            if 0 <= result.index < len(image_candidates):
+                hit = dict(image_candidates[result.index])
+                hit["rerank_score"] = result.score
+                hits.append(hit)
+        return hits
+
     @staticmethod
     def collect_image_entries(hits: list[dict]) -> list[tuple[str, str]]:
         entries: list[tuple[str, str]] = []

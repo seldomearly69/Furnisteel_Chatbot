@@ -15,6 +15,7 @@ from app.db.models import ChatMessage, MessageRole, MessageType
 from app.db.repository import ChatRepository
 from app.rag.chroma_store import ChromaKnowledgeStore
 from app.rag.retrieval import KnowledgeRetriever
+from app.rag.image_intent import is_image_intent
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +242,20 @@ class ChatService:
         except Exception:
             logger.exception("RAG query decomposition failed, falling back to single query")
             return [user_message]
-        
+
+    def _query_wants_images(self, user_message: str, history: list[dict]) -> bool:
+        """Decide whether this turn needs a dedicated image lookup, separate from
+        spec/pricing retrieval. Currently keyword-based; only worth upgrading to
+        an LLM classifier if keyword false positives/negatives show up in logs."""
+        if is_image_intent(user_message):
+            return True
+        # check last user turn in history too, in case this message is a short follow-up
+        # like "yes please" after "want to see examples?"
+        for msg in reversed(history[-2:]):
+            if msg.get("role") == "user" and is_image_intent(msg.get("content", "")):
+                return True
+        return False
+    
     def _rerank_merged_hits(self, hits: list[dict], user_message: str) -> list[dict]:
         """Re-rank the combined pool from all sub-queries against the original
         customer message, then cap to a percentage of the merged pool size."""
@@ -382,13 +396,29 @@ class ChatService:
 
         all_hits = self._dedupe_hits(all_hits)
         all_hits = self._rerank_merged_hits(all_hits, user_message)
+
+        image_hits: list[dict] = []
+        if self._query_wants_images(user_message, history_for_retrieval):
+            image_hits = self._retriever.retrieve_images(user_message)
+            logger.info("RAG image lookup triggered, hits=%d", len(image_hits))
+
         context = self._retriever.format_context(all_hits)
-        image_count = len(KnowledgeRetriever.collect_image_entries(all_hits))
+        image_count = 0
+        if image_hits:
+            image_entries = KnowledgeRetriever.collect_image_entries(image_hits)
+            image_count = len(image_entries)
+            if image_entries:
+                lines = [f"- {title}: {url}" for title, url in image_entries]
+                image_block = (
+                    "Available images in retrieved context "
+                    f"({len(image_entries)} total — use these exact URLs for [[IMAGE:...]]):\n"
+                    + "\n".join(lines)
+                )
+                context = f"{image_block}\n\n---\n\n{context}"
+
         logger.info(
             "RAG context ready hits=%d images=%d context_chars=%d",
-            len(all_hits),
-            image_count,
-            len(context),
+            len(all_hits), image_count, len(context),
         )
 
         history_for_completion = self._history_openai_messages(
