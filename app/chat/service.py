@@ -232,7 +232,7 @@ class ChatService:
                 for l in (response.choices[0].message.content or "").split("\n")
                 if l.strip()
             ]
-            result = lines[:4] or [user_message]
+            result = lines or [user_message]
             logger.info(
                 "RAG query decomposition: %d sub-queries from %d history messages: %s",
                 len(result), len(messages), result,
