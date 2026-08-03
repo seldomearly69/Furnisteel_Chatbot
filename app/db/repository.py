@@ -1,11 +1,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case
 from sqlalchemy.orm import Session
 
 from app.db.models import ChatMessage, Conversation, MessageRole, MessageType
 
+role_priority = case(
+    (ChatMessage.role == MessageRole.USER, 0),
+    (ChatMessage.role == MessageRole.ASSISTANT, 1),
+    else_=2,
+)
 
 class ChatRepository:
     def __init__(self, session: Session):
@@ -73,7 +78,10 @@ class ChatRepository:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
-            .order_by(ChatMessage.id.asc())
+            .order_by(
+                ChatMessage.created_at.desc(),
+                role_priority.desc(),
+            )
             .limit(limit)
         )
         messages = list(self._session.scalars(stmt))
@@ -100,7 +108,10 @@ class ChatRepository:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
-            .order_by(ChatMessage.id.asc())
+            .order_by(
+                ChatMessage.created_at.asc(),
+                role_priority.desc(),
+            )
             .limit(limit)
             .offset(offset)
         )
@@ -112,7 +123,10 @@ class ChatRepository:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
-            .order_by(ChatMessage.id.desc())
+            .order_by(
+                ChatMessage.created_at.desc(),
+                role_priority.desc(),
+            )
             .limit(limit)
         )
         messages = list(self._session.scalars(stmt))
