@@ -14,6 +14,8 @@ import {
   saveToken
 } from "./auth";
 
+import { X } from "lucide-react";
+
 const READ_COUNTS_KEY = "furnisteel_read_counts";
 const POLL_INTERVAL_MS = 10_000;
 const SESSION_CHECK_MS = 15_000;
@@ -72,6 +74,7 @@ function initials(label: string) {
 }
 
 function MessageBody({ message }: { message: MessageRow }) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const isImage = message.message_type === "image";
   const caption =
     message.content && message.content !== "[Image]" ? message.content : null;
@@ -79,22 +82,66 @@ function MessageBody({ message }: { message: MessageRow }) {
   if (isImage && message.media_url) {
     return (
       <div className="space-y-2">
-        <a href={message.media_url} target="_blank" rel="noopener noreferrer">
+        <button
+          type="button"
+          onClick={() => setLightboxOpen(true)}
+          className="block w-full text-left"
+        >
           <img
             src={message.media_url}
             alt={caption || "Customer image"}
-            className="max-w-full rounded-md border border-black/20"
+            className="max-w-full rounded-md border border-black/20 cursor-zoom-in"
             loading="lazy"
           />
-        </a>
+        </button>
         {caption ? (
           <div className="whitespace-pre-wrap leading-relaxed">{caption}</div>
         ) : null}
+
+        {lightboxOpen && (
+          <ImageLightbox
+            src={message.media_url}
+            alt={caption || "Customer image"}
+            onClose={() => setLightboxOpen(false)}
+          />
+        )}
       </div>
     );
   }
 
   return <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>;
+}
+
+function ImageLightbox({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+      >
+        <X className="h-6 w-6" />
+      </button>
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-full max-w-full rounded-md object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
 }
 
 function Avatar({ label, size = "md" }: { label: string; size?: "sm" | "md" }) {
