@@ -109,7 +109,7 @@ class ChatRepository:
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
             .order_by(
-                ChatMessage.created_at.asc(),
+                ChatMessage.created_at.desc(),
                 role_priority.desc(),
             )
             .limit(limit)
