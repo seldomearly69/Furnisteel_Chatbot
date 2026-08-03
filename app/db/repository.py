@@ -146,7 +146,10 @@ class ChatRepository:
                 ChatMessage.conversation_id == conversation_id,
                 ChatMessage.created_at < before,
             )
-            .order_by(ChatMessage.created_at.desc())
+            .order_by(
+                ChatMessage.created_at.desc(),
+                role_priority.desc(),
+            )
             .limit(limit)
         )
         messages = list(self._session.scalars(stmt))
@@ -166,7 +169,10 @@ class ChatRepository:
                 ChatMessage.conversation_id == conversation_id,
                 ChatMessage.created_at > after,
             )
-            .order_by(ChatMessage.created_at.asc())
+            .order_by(
+                ChatMessage.created_at.desc(),
+                role_priority.desc(),
+            )
             .limit(limit)
         )
         return list(self._session.scalars(stmt))
