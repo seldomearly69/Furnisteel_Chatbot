@@ -52,6 +52,7 @@ def register_whatsapp_handlers(wa: WhatsApp) -> None:
 
     @wa.on_message(filters.text)
     async def on_text(_wa: WhatsApp, message: types.Message):
+        await message.indicate_typing()
         user_text = _extract_text(message)
         if not user_text:
             await message.reply_text(
@@ -88,6 +89,7 @@ def register_whatsapp_handlers(wa: WhatsApp) -> None:
             )
             return
 
+        await message.indicate_typing()
         try:
             image_bytes, mime_type = await _download_image_bytes(message)
         except Exception:
