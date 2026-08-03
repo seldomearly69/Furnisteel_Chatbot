@@ -100,7 +100,7 @@ class ChatRepository:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
-            .order_by(ChatMessage.created_at.asc())
+            .order_by(ChatMessage.id.asc())
             .limit(limit)
             .offset(offset)
         )
@@ -112,7 +112,7 @@ class ChatRepository:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
-            .order_by(ChatMessage.created_at.desc())
+            .order_by(ChatMessage.id.desc())
             .limit(limit)
         )
         messages = list(self._session.scalars(stmt))
