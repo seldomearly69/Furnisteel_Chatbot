@@ -67,7 +67,20 @@ services:
     volumes:
       - ./nginx/certs:/etc/letsencrypt          # ← writes renewed certs here
       - ./certbot/www:/var/www/certbot           # ← ACME challenge webroot
-    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet && docker kill --signal=HUP nginx; sleep 12h & wait $${!}; done"
+    entrypoint: /bin/sh -c "
+      trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        LATEST=$$(ls -t /etc/letsencrypt/archive/bot.fmfurnisteel.com/fullchain*.pem | head -1 | xargs basename);
+        NUM=$$(echo $$LATEST | grep -o '[0-9]*');
+        cd /etc/letsencrypt/live/bot.fmfurnisteel.com &&
+        ln -sf ../../archive/bot.fmfurnisteel.com/fullchain$${NUM}.pem fullchain.pem &&
+        ln -sf ../../archive/bot.fmfurnisteel.com/privkey$${NUM}.pem privkey.pem &&
+        ln -sf ../../archive/bot.fmfurnisteel.com/cert$${NUM}.pem cert.pem &&
+        ln -sf ../../archive/bot.fmfurnisteel.com/chain$${NUM}.pem chain.pem &&
+        docker kill --signal=HUP nginx;
+        sleep 168h & wait $${!};
+      done"
 
   chat-ui:
     build:
