@@ -16,3 +16,4 @@ data/documents/*
 *.pem
 nginx/certs/*
 keys/
+*/node_modules
